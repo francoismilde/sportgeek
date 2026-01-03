@@ -9,7 +9,6 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     
-    # Relation : Un user a plusieurs séances
     workouts = relationship("WorkoutSession", back_populates="owner")
 
 class WorkoutSession(Base):
@@ -17,11 +16,9 @@ class WorkoutSession(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     date = Column(Date, index=True)
-    duration = Column(Float) # en minutes
-    rpe = Column(Float)      # 0 à 10
+    duration = Column(Float)  # <--- Elle est bien là !
+    rpe = Column(Float)
     
-    # Clé étrangère vers l'utilisateur
     user_id = Column(Integer, ForeignKey("users.id"))
 
-    # Relation inverse
     owner = relationship("User", back_populates="workouts")
