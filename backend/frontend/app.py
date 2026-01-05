@@ -1,12 +1,15 @@
 import streamlit as st
 import requests
 import pandas as pd
+import os  # <--- Ajout de l'import os
 
 # Configuration de la page
 st.set_page_config(page_title="TitanFlow Pro", page_icon="⚡", layout="wide")
 
 # L'URL de ton API (Backend)
-API_URL = "http://127.0.0.1:8000"
+# En PROD (Render) : Il utilisera la variable d'environnement BACKEND_URL
+# En LOCAL (Ton PC) : Il utilisera http://127.0.0.1:8000 par défaut
+API_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
 # --- GESTION DE LA SESSION (Token) ---
 if "token" not in st.session_state:
@@ -46,7 +49,7 @@ try:
     health = requests.get(f"{API_URL}/health").json()
     st.success(f"Backend connecté v{health['version']}")
 except:
-    st.error("🚨 Le Backend semble éteint. Vérifie le terminal 1.")
+    st.error("🚨 Le Backend semble éteint. Vérifie que l'URL est correcte.")
 
 # Gestion Login/Logout
 if not st.session_state.token:
