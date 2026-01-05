@@ -33,19 +33,19 @@ class ACWRResponse(BaseModel):
 # --- USER / AUTH Schemas ---
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, description="Pseudo unique")
+    # AJOUT DU CHAMP EMAIL
+    email: Optional[str] = None
     password: str = Field(..., min_length=6, description="Mot de passe fort")
 
 class UserResponse(BaseModel):
     id: int
     username: str
+    email: Optional[str] = None
     
-    # Permet à Pydantic de lire les données depuis l'objet SQLAlchemy
     class Config:
         from_attributes = True
-        
-# ... (Garde tes imports et classes précédentes : OneRepMax, ACWR, UserCreate, UserResponse)
 
-# --- TOKEN Schemas (Nouveau) ---
+# --- TOKEN Schemas ---
 class Token(BaseModel):
     access_token: str
     token_type: str
