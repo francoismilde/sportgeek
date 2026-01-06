@@ -33,7 +33,6 @@ class ACWRResponse(BaseModel):
 # --- USER / AUTH Schemas ---
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, description="Pseudo unique")
-    # AJOUT DU CHAMP EMAIL
     email: Optional[str] = None
     password: str = Field(..., min_length=6, description="Mot de passe fort")
 
@@ -53,9 +52,25 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username: Optional[str] = None
 
-# --- COACH / AI Schemas (NOUVEAU) ---
+# --- COACH / AI Schemas ---
 class ProfileAuditRequest(BaseModel):
-    profile_data: Dict[str, Any] # On accepte tout le JSON du profil Flutter
+    profile_data: Dict[str, Any]
 
 class ProfileAuditResponse(BaseModel):
     markdown_report: str
+
+# [NOUVEAU] --- STRATEGY Schemas ---
+class Phase(BaseModel):
+    phase_name: str
+    focus: str
+    intensity_metric: str
+    volume_strategy: str
+    start: str
+    end: str
+
+class StrategyResponse(BaseModel):
+    periodization_title: str
+    periodization_logic: str
+    progression_model: str
+    recommended_frequency: int
+    phases: List[Phase]
