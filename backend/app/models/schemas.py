@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import date
 
 # --- 1RM Schemas ---
@@ -52,3 +52,10 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+# --- COACH / AI Schemas (NOUVEAU) ---
+class ProfileAuditRequest(BaseModel):
+    profile_data: Dict[str, Any] # On accepte tout le JSON du profil Flutter
+
+class ProfileAuditResponse(BaseModel):
+    markdown_report: str
