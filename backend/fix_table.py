@@ -4,15 +4,19 @@ from app.core.database import engine
 print("☢️  Démarrage de l'option nucléaire...")
 
 with engine.connect() as connection:
-    # On force la transaction
     trans = connection.begin()
     try:
-        # SQL Brut : On détruit la table et tout ce qui y est lié
+        # On supprime d'abord les séances (qui dépendent des users)
         connection.execute(text("DROP TABLE IF EXISTS workout_sessions CASCADE;"))
+        print("💥 Table workout_sessions pulvérisée.")
+        
+        # On supprime ensuite les users (pour recréer la table avec l'email)
+        connection.execute(text("DROP TABLE IF EXISTS users CASCADE;"))
+        print("💥 Table users pulvérisée.")
+        
         trans.commit()
-        print("💥 Table workout_sessions pulvérisée avec succès.")
     except Exception as e:
         trans.rollback()
         print(f"❌ Erreur : {e}")
 
-print("✅ Terminé. Le redémarrage du serveur recréera la table propre.")
+print("✅ Terminé. Redémarre le serveur pour recréer les tables propres.")
