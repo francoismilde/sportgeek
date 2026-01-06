@@ -74,3 +74,16 @@ class StrategyResponse(BaseModel):
     progression_model: str
     recommended_frequency: int
     phases: List[Phase]
+
+# [NOUVEAU] --- WEEKLY PLANNING Schemas ---
+
+class WeeklySession(BaseModel):
+    day: str = Field(..., alias="Jour")
+    slot: str = Field(..., alias="Créneau")
+    type: str = Field(..., alias="Type") # "Repos", "Spécifique (PPS)", "Athlétisation (PPG)"
+    focus: str = Field(..., alias="Focus")
+    rpe_target: int = Field(..., alias="RPE Cible")
+
+class WeeklyPlanResponse(BaseModel):
+    schedule: List[WeeklySession]
+    reasoning: str
