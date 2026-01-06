@@ -87,16 +87,15 @@ def get_weekly_planning_prompt(profile_data):
     user_sport = profile_data.get('sport', 'Musculation')
     avail = profile_data.get('availability', [])
     
-    # On reformate les dispos pour l'IA (plus lisible)
+    # On reformate les dispos pour l'IA
     slots_context = []
     for slot in avail:
-        # On ne garde que les champs pertinents
-        if slot.get('isActive', False): # Attention: Flutter envoie 'isActive', Streamlit 'Active'
+        if slot.get('isActive', False):
              slots_context.append({
                 "Jour": slot.get('day'),
                 "Moment": slot.get('moment'),
                 "Dispo_Max": f"{slot.get('duration')} min",
-                "Type_Cible": slot.get('type') # 'PPS', 'PPG', 'Libre'
+                "Type_Cible": slot.get('type')
             })
     
     avail_json = json.dumps(slots_context, ensure_ascii=False, indent=2)
@@ -121,16 +120,16 @@ def get_weekly_planning_prompt(profile_data):
        - "PPG" = Renforcement / Muscu.
        - "Libre" = Choisis le mieux adapté pour l'équilibre.
     3. Si pas de créneau dispo un jour -> "Type": "Repos", "Focus": "Récupération".
+    4. "RPE Cible" doit être un ENTIER (ex: 0 pour Repos, 7 pour une séance). Ne jamais mettre null.
 
     FORMAT DE SORTIE (JSON OBJET) :
     {{
         "schedule": [
             {{ "Jour": "Lundi", "Créneau": "Soir", "Type": "Spécifique (PPS)", "Focus": "...", "RPE Cible": 7 }},
-            ... (14 entrées pour couvrir Matin/Soir ou juste les jours pertinents, mais assure toi de couvrir la semaine)
+            ... (14 entrées pour couvrir la semaine)
         ],
         "reasoning": "Explication courte de la logique de la semaine."
     }}
-    Important : Le tableau "schedule" doit être complet et cohérent.
     """
 
 # --- ROUTES ---
@@ -163,16 +162,14 @@ async def generate_week(payload: ProfileAuditRequest):
     if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        # On force le JSON pour avoir la structure exacte
+        # On force le JSON
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
         
         prompt = get_weekly_planning_prompt(payload.profile_data)
         response = model.generate_content(prompt)
         
-        # Parsing et nettoyage
         result = json.loads(response.text)
         
-        # Petit filet de sécurité si l'IA oublie la clé racine
         if "schedule" not in result and isinstance(result, list):
             result = {"schedule": result, "reasoning": "Généré automatiquement."}
             

@@ -59,7 +59,7 @@ class ProfileAuditRequest(BaseModel):
 class ProfileAuditResponse(BaseModel):
     markdown_report: str
 
-# [NOUVEAU] --- STRATEGY Schemas ---
+# --- STRATEGY Schemas ---
 class Phase(BaseModel):
     phase_name: str
     focus: str
@@ -75,14 +75,14 @@ class StrategyResponse(BaseModel):
     recommended_frequency: int
     phases: List[Phase]
 
-# [NOUVEAU] --- WEEKLY PLANNING Schemas ---
-
+# --- WEEKLY PLANNING Schemas ---
 class WeeklySession(BaseModel):
     day: str = Field(..., alias="Jour")
     slot: str = Field(..., alias="Créneau")
-    type: str = Field(..., alias="Type") # "Repos", "Spécifique (PPS)", "Athlétisation (PPG)"
+    type: str = Field(..., alias="Type") 
     focus: str = Field(..., alias="Focus")
-    rpe_target: int = Field(..., alias="RPE Cible")
+    # CORRECTION ICI : On autorise le None et on met 0 par défaut
+    rpe_target: Optional[int] = Field(0, alias="RPE Cible")
 
 class WeeklyPlanResponse(BaseModel):
     schedule: List[WeeklySession]
