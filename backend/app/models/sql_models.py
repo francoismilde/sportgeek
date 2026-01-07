@@ -17,6 +17,9 @@ class User(Base):
     # [NOUVEAU] Mémoire du Coach IA
     strategy_data = Column(Text, nullable=True)      # Stocke le JSON de la Stratégie
     weekly_plan_data = Column(Text, nullable=True)   # Stocke le JSON de la Semaine Type
+    
+    # [DEV-CARD #05] Brouillon de séance (Persistance en cas de crash)
+    draft_workout_data = Column(Text, nullable=True)
 
     workouts = relationship("WorkoutSession", back_populates="owner")
 

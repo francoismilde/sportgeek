@@ -297,12 +297,48 @@ async def generate_week(
         print(f"❌ Erreur Week Gen: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- GESTION DES SÉANCES & BROUILLONS ---
+
+@router.get("/workout/draft", response_model=AIWorkoutPlan)
+async def get_draft_workout(
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    [DEV-CARD #05] Récupère le brouillon de séance en cours (si existant).
+    Utile pour reprendre une session après un crash.
+    """
+    if not current_user.draft_workout_data:
+        raise HTTPException(status_code=404, detail="Aucun brouillon trouvé.")
+    
+    try:
+        return json.loads(current_user.draft_workout_data)
+    except:
+        raise HTTPException(status_code=500, detail="Erreur lecture brouillon.")
+
+@router.delete("/workout/draft")
+async def discard_draft_workout(
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    [DEV-CARD #05-B] Supprime explicitement le brouillon (Abandon).
+    """
+    try:
+        current_user.draft_workout_data = None
+        db.commit()
+        return {"status": "success", "message": "Brouillon supprimé."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/workout", response_model=AIWorkoutPlan)
 async def generate_workout(
     payload: GenerateWorkoutRequest,
+    db: Session = Depends(get_db),
     current_user: sql_models.User = Depends(get_current_user)
 ):
-    """Génère une séance détaillée."""
+    """
+    Génère une séance détaillée ET la sauvegarde en brouillon.
+    """
     if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
@@ -319,6 +355,11 @@ async def generate_workout(
             else:
                 raise ValueError("L'IA a renvoyé une liste vide.")
         
+        # [DEV-CARD #05] Sauvegarde automatique du brouillon
+        current_user.draft_workout_data = json.dumps(parsed_response)
+        db.commit()
+        db.refresh(current_user)
+
         return parsed_response
     except Exception as e:
         print(f"❌ Erreur Workout Gen: {e}")

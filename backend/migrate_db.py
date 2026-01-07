@@ -43,7 +43,10 @@ with engine.connect() as connection:
         # [NOUVEAU] Ajout des colonnes IA
         connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"))
         connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
-        print("✅ Table 'users' vérifiée (profile, strategy, weekly).")
+        
+        # [DEV-CARD #05] Brouillon Séance
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"))
+        print("✅ Table 'users' vérifiée (profile, strategy, weekly, draft).")
         
         trans.commit()
         print("🎉 Migration terminée avec succès ! Tes tables sont à jour Coach.")

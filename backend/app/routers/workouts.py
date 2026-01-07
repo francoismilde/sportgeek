@@ -19,6 +19,7 @@ async def create_workout(
     """
     Enregistre une séance complète avec gestion du Polymorphisme (Metric Type).
     Vérifie la cohérence des données (ex: Watts max, RPE bounds).
+    [DEV-CARD #05] Supprime le brouillon associé une fois la séance validée.
     """
     # 1. Validation de haut niveau avant insertion
     for s in workout.sets:
@@ -67,6 +68,9 @@ async def create_workout(
                 metric_type=s.metric_type # Le fameux recording_mode
             )
             db.add(db_set)
+        
+        # [DEV-CARD #05] Nettoyage du brouillon après succès
+        current_user.draft_workout_data = None
         
         db.commit()
         db.refresh(db_workout)
