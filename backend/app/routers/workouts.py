@@ -17,10 +17,29 @@ async def create_workout(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    Enregistre une séance complète avec ses séries.
-    🔒 Nécessite d'être connecté.
+    Enregistre une séance complète avec gestion du Polymorphisme (Metric Type).
+    Vérifie la cohérence des données (ex: Watts max, RPE bounds).
     """
-    # 1. Création de la Session
+    # 1. Validation de haut niveau avant insertion
+    for s in workout.sets:
+        # Validation RPE
+        if s.rpe is not None and (s.rpe < 0 or s.rpe > 10):
+            # On cap plutôt que de crasher
+            s.rpe = max(0, min(10, s.rpe))
+            
+        # Validation Physiologique selon le mode
+        if s.metric_type == 'POWER_TIME':
+            # Check Watts (weight)
+            if s.weight > 2000:
+                raise HTTPException(status_code=400, detail=f"Valeur impossible : {s.weight} Watts sur l'exercice {s.exercise_name}. Vérifiez la saisie.")
+        
+        elif s.metric_type == 'PACE_DISTANCE':
+            # Dans ce mode : weight = Vitesse/Pace (souvent 0 si calculée) ou Distance, reps = Distance ou Temps
+            # Standard TitanFlow : Reps = Distance (m), Weight = 0 (ou vitesse m/s)
+            if s.reps > 100000: # 100km max par série pour être sûr
+                 raise HTTPException(status_code=400, detail=f"Distance suspecte : {s.reps} mètres.")
+
+    # 2. Création de la Session
     db_workout = sql_models.WorkoutSession(
         date=workout.date,
         duration=workout.duration,
@@ -33,18 +52,19 @@ async def create_workout(
     db.commit()
     db.refresh(db_workout)
     
-    # 2. Ajout des Séries (Sets)
+    # 3. Ajout des Séries (Sets)
     if workout.sets:
         for s in workout.sets:
+            # Conversion explicite Pydantic -> SQL Model
             db_set = sql_models.WorkoutSet(
                 session_id=db_workout.id,
                 exercise_name=s.exercise_name,
                 set_order=s.set_order,
-                weight=s.weight,
-                reps=s.reps,
+                weight=s.weight, # Déjà nettoyé par Pydantic (float)
+                reps=s.reps,     # Déjà nettoyé par Pydantic (float, secondes inclues)
                 rpe=s.rpe,
                 rest_seconds=s.rest_seconds,
-                metric_type=s.metric_type
+                metric_type=s.metric_type # Le fameux recording_mode
             )
             db.add(db_set)
         
@@ -61,7 +81,9 @@ async def read_workouts(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    Récupère l'historique complet (avec sets).
+    Récupère l'historique complet.
+    Les champs polymorphes (weight/reps) sont renvoyés tels quels,
+    le Frontend utilisera 'metric_type' pour savoir si c'est des kg ou des watts.
     """
     workouts = db.query(sql_models.WorkoutSession)\
         .filter(sql_models.WorkoutSession.user_id == current_user.id)\

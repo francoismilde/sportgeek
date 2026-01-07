@@ -1,16 +1,48 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional, Dict, Any, Union
 from datetime import date
+import re
 
 # --- SHARED ---
 class WorkoutSetBase(BaseModel):
     exercise_name: str
     set_order: int
-    weight: float = 0.0
-    reps: float = 0.0
-    rpe: float = 0.0
+    
+    # On accepte float ou str pour gérer les entrées type "5:30" (Pace)
+    # Mais le modèle nettoiera ça en float pour la suite
+    weight: Union[float, str] = 0.0
+    reps: Union[float, str] = 0.0
+    
+    rpe: Optional[float] = 0.0
     rest_seconds: int = 0
-    metric_type: str = "LOAD_REPS"
+    metric_type: str = "LOAD_REPS" # C'est notre recording_mode
+
+    @field_validator('weight', 'reps', mode='before')
+    def parse_polymorphic_fields(cls, v):
+        """
+        Convertit les formats humains (MM:SS) en secondes (float)
+        et nettoie les chaînes en nombres.
+        """
+        if isinstance(v, str):
+            v = v.strip().replace(',', '.')
+            # Cas du format MM:SS ou HH:MM:SS
+            if ':' in v:
+                parts = v.split(':')
+                try:
+                    seconds = 0.0
+                    if len(parts) == 2: # MM:SS
+                        seconds = float(parts[0]) * 60 + float(parts[1])
+                    elif len(parts) == 3: # HH:MM:SS
+                        seconds = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                    return seconds
+                except ValueError:
+                    return 0.0
+            # Cas standard nombre string "10.5"
+            try:
+                return float(v)
+            except ValueError:
+                return 0.0
+        return v
 
 # --- INPUTS (Création) ---
 class WorkoutSetCreate(WorkoutSetBase):
@@ -27,6 +59,10 @@ class WorkoutSessionCreate(BaseModel):
 # --- OUTPUTS (Lecture) ---
 class WorkoutSetResponse(WorkoutSetBase):
     id: int
+    # On force le type float en sortie pour la cohérence JSON
+    weight: float
+    reps: float
+    
     class Config:
         from_attributes = True
 
@@ -39,15 +75,15 @@ class WorkoutSessionResponse(WorkoutSessionCreate):
 # --- AI GENERATION SCHEMAS ---
 class GenerateWorkoutRequest(BaseModel):
     profile_data: Dict[str, Any]
-    context: Dict[str, Any] # { "duration": 60, "energy": 7, "focus": "Legs" }
+    context: Dict[str, Any]
 
 class AIExercise(BaseModel):
     name: str
     sets: int
-    reps: str # String pour gérer "10-12" ou "AMRAP"
+    reps: str 
     rest: int
     tips: str
-    recording_mode: str = "LOAD_REPS" # LOAD_REPS, PACE_DISTANCE, etc.
+    recording_mode: str = "LOAD_REPS"
 
 class AIWorkoutPlan(BaseModel):
     title: str
@@ -56,7 +92,7 @@ class AIWorkoutPlan(BaseModel):
     exercises: List[AIExercise]
     cooldown: List[str]
 
-# --- EXISTING SCHEMAS (Keep them for compatibility if needed) ---
+# --- OTHER SCHEMAS (Keep existing ones) ---
 class OneRepMaxRequest(BaseModel):
     weight: float
     reps: int
@@ -68,7 +104,7 @@ class OneRepMaxResponse(BaseModel):
     input_reps: int
 
 class ACWRRequest(BaseModel):
-    history: List[Dict[str, Any]] # Simplifié pour éviter import circulaire
+    history: List[Dict[str, Any]]
 
 class ACWRResponse(BaseModel):
     ratio: float
@@ -87,7 +123,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     email: Optional[str] = None
-    profile_data: Optional[str] = None # Pour renvoyer le profil brut si besoin
+    profile_data: Optional[str] = None 
     class Config:
         from_attributes = True
 
@@ -130,6 +166,5 @@ class WeeklyPlanResponse(BaseModel):
     schedule: List[WeeklySession]
     reasoning: str
 
-# [NOUVEAU] Schéma pour la mise à jour du profil
 class UserProfileUpdate(BaseModel):
     profile_data: Dict[str, Any]

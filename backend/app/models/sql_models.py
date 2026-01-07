@@ -11,7 +11,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String)
     
-    # [NOUVEAU] Stockage du profil complet (JSON) en texte
+    # Stockage du profil complet (JSON) en texte
     profile_data = Column(Text, nullable=True)
 
     workouts = relationship("WorkoutSession", back_populates="owner")
@@ -43,11 +43,17 @@ class WorkoutSet(Base):
     exercise_name = Column(String, index=True)
     set_order = Column(Integer)
     weight = Column(Float, default=0.0)
+    
+    # [POLYMORPHISME] 
+    # reps peut stocker : Répétitions (int), Durée (s), Distance (m) selon le mode
     reps = Column(Float, default=0.0)
+    
     rpe = Column(Float, default=0.0)
     rest_seconds = Column(Integer, default=0)
     
-    # Pour supporter les types complexes (PACE_DISTANCE, etc.)
-    metric_type = Column(String, default="LOAD_REPS") 
+    # [CŒUR DU SYSTÈME]
+    # Définit comment interpréter 'weight' et 'reps'.
+    # Valeurs possibles : LOAD_REPS, ISOMETRIC_TIME, PACE_DISTANCE, POWER_TIME, BODYWEIGHT_REPS
+    metric_type = Column(String, nullable=False, default="LOAD_REPS") 
     
     session = relationship("WorkoutSession", back_populates="sets")
