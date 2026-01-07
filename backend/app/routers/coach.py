@@ -87,14 +87,12 @@ def get_periodization_prompt(profile_data):
 def get_weekly_planning_prompt(profile_data):
     """Génère le prompt complexe pour la semaine type."""
     
-    # 1. Extraction contextuelle
     user_sport = profile_data.get('sport', 'Musculation')
     avail = profile_data.get('availability', [])
     
-    # On reformate les dispos pour l'IA
     slots_context = []
     for slot in avail:
-        if slot.get('isActive', False):
+        if slot.get('isActive', False): # Adaptation au format Flutter (isActive vs Active)
              slots_context.append({
                 "Jour": slot.get('day'),
                 "Moment": slot.get('moment'),
@@ -137,7 +135,10 @@ def get_weekly_planning_prompt(profile_data):
     """
 
 def get_workout_generation_prompt(profile_data, context):
-    """Génère une séance détaillée."""
+    """
+    Génère une séance détaillée avec gestion stricte des MODES D'ENREGISTREMENT.
+    C'est ici que l'intelligence sportive se joue.
+    """
     sport = profile_data.get('sport', 'Musculation')
     user_level = profile_data.get('level', 'Intermédiaire')
     
@@ -160,10 +161,17 @@ def get_workout_generation_prompt(profile_data, context):
     - Focus demandé : {focus}
     - Matériel : {equipment}
 
-    INSTRUCTIONS TECHNIQUES :
+    INSTRUCTIONS TECHNIQUES CRITIQUES :
     1. Adapte le volume (Séries/Reps) à l'énergie du jour.
-    2. Choisis des exercices pertinents pour le matériel dispo.
-    3. "recording_mode" DOIT être choisi parmi : "LOAD_REPS" (Muscu), "PACE_DISTANCE" (Cardio/Run), "POWER_TIME" (Vélo), "BODYWEIGHT_REPS" (PdC), "ISOMETRIC_TIME" (Gainage).
+    2. Pour CHAQUE exercice, tu DOIS choisir le 'recording_mode' adapté à la nature de l'effort :
+       - "LOAD_REPS" : Pour la musculation classique (Haltères, Barres, Machines). Champs : Poids/Reps.
+       - "BODYWEIGHT_REPS" : Pour le poids du corps (Pompes, Tractions). Champs : Lest/Reps.
+       - "ISOMETRIC_TIME" : Pour le statique (Gainage, Chaise). Champs : Lest/Temps(s).
+       - "PACE_DISTANCE" : Pour le Cardio/Running/Natation. Champs : Allure/Distance(m).
+       - "POWER_TIME" : Pour le Vélo/Ergo. Champs : Watts/Temps(s).
+    
+    3. Le champ 'reps' peut être une string (ex: "10-12" ou "AMRAP") ou un nombre.
+    4. Le champ 'rest' est en secondes.
 
     STRUCTURE DE SORTIE (JSON STRICT) :
     {{
@@ -178,6 +186,14 @@ def get_workout_generation_prompt(profile_data, context):
                 "rest": 90,
                 "tips": "Dos droit, descendre sous la parallèle.",
                 "recording_mode": "LOAD_REPS"
+            }},
+            {{
+                "name": "Gainage Planche",
+                "sets": 3,
+                "reps": "45",
+                "rest": 60,
+                "tips": "Abdos contractés.",
+                "recording_mode": "ISOMETRIC_TIME"
             }}
         ],
         "cooldown": ["Etirement 1"]
@@ -214,7 +230,6 @@ async def generate_week(payload: ProfileAuditRequest):
     if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        # On force le JSON
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
         
         prompt = get_weekly_planning_prompt(payload.profile_data)
@@ -244,12 +259,10 @@ async def generate_workout(payload: GenerateWorkoutRequest):
         parsed_response = json.loads(response.text)
         
         # --- FIX ROBUSTE POUR L'ERREUR LISTE ---
-        # Si l'IA renvoie une liste au lieu d'un dict, on prend le premier élément
         if isinstance(parsed_response, list):
             if parsed_response:
                 parsed_response = parsed_response[0]
             else:
-                # Si liste vide, on renvoie une erreur ou un objet vide par défaut
                 raise ValueError("L'IA a renvoyé une liste vide.")
         
         return parsed_response
