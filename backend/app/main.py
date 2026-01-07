@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+from sqlalchemy import text # <--- Pour le script de réparation
 
 # --- IMPORTS DES ROUTEURS ---
-# On ajoute 'user' ici
 from app.routers import performance, safety, auth, workouts, coach, user
 from app.core.database import engine, Base
 
@@ -22,7 +22,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="1.7.0",
+    version="1.8.0", # Petite montée de version
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -36,19 +36,49 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- ROUTERS ---
+# --- ROUTEURS ---
 app.include_router(auth.router)
 app.include_router(workouts.router)
 app.include_router(performance.router)
 app.include_router(safety.router)
 app.include_router(coach.router)
-app.include_router(user.router) # <--- NOUVEAU ROUTEUR ENREGISTRÉ
+app.include_router(user.router)
+
+# --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR) ---
+@app.get("/fix_db", tags=["System"])
+def fix_database_schema():
+    """
+    🛠️ ROUTE D'URGENCE : Met à jour la structure de la BDD.
+    Ajoute les colonnes manquantes (energy_level, notes, metric_type...)
+    sans supprimer les données existantes.
+    """
+    try:
+        with engine.connect() as connection:
+            trans = connection.begin()
+            
+            # 1. Table WORKOUT_SESSIONS (Séances)
+            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"))
+            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"))
+            
+            # 2. Table WORKOUT_SETS (Séries) - C'était LUI le coupable !
+            connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
+            connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"))
+            
+            # 3. Table USERS (Profil)
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
+            
+            trans.commit()
+            return {"status": "SUCCESS", "message": "✅ Base de données réparée : Colonnes manquantes ajoutées (Sessions + Sets + Users)."}
+            
+    except Exception as e:
+        return {"status": "ERROR", "message": f"❌ Erreur lors de la réparation : {str(e)}"}
+
 
 @app.get("/health", tags=["Health Check"])
 async def health_check():
     return {
         "status": "active",
-        "version": "1.7.0",
+        "version": "1.8.0",
         "service": "TitanFlow Backend",
         "database": "connected"
     }
