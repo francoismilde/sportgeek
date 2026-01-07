@@ -40,12 +40,13 @@ with engine.connect() as connection:
         # Ajout de profile_data pour la sauvegarde du profil
         connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
         
-        # [NOUVEAU] Ajout des colonnes IA
+        # Ajout des colonnes IA (Stratégie & Planning)
         connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"))
         connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
         
-        # [DEV-CARD #05] Brouillon Séance
+        # [FIX] Ajout de la colonne Brouillon (Draft) qui causait le crash
         connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"))
+        
         print("✅ Table 'users' vérifiée (profile, strategy, weekly, draft).")
         
         trans.commit()

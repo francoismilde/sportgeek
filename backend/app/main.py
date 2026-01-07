@@ -22,7 +22,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="1.9.1", # Petite montée de version pour marquer le coup
+    version="1.9.2", # Bump version pour le fix DB
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -44,12 +44,12 @@ app.include_router(safety.router)
 app.include_router(coach.router)
 app.include_router(user.router)
 
-# --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V3) ---
+# --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V4) ---
 @app.get("/fix_db", tags=["System"])
 def fix_database_schema():
     """
-    🛠️ ROUTE D'URGENCE V3 : Ajoute TOUTES les colonnes manquantes.
-    Inclus maintenant les colonnes pour la mémoire de l'IA.
+    🛠️ ROUTE D'URGENCE V4 : Ajoute TOUTES les colonnes manquantes.
+    Inclus maintenant draft_workout_data pour réparer le crash Login.
     """
     try:
         with engine.connect() as connection:
@@ -67,15 +67,17 @@ def fix_database_schema():
             # 3. Table USERS (Profil)
             connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
             
-            # [NOUVEAU] FIX CRITIQUE : Mémoire IA
-            # On ajoute les colonnes manquantes qui causent le crash
+            # Mémoire IA
             connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"))
             connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
+            
+            # [FIX CRITIQUE] Ajout du brouillon
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"))
             
             trans.commit()
             return {
                 "status": "SUCCESS", 
-                "message": "✅ Base de données réparée : Colonnes IA (strategy_data, weekly_plan_data) ajoutées !"
+                "message": "✅ Base de données réparée : Colonne 'draft_workout_data' ajoutée !"
             }
             
     except Exception as e:
@@ -86,7 +88,7 @@ def fix_database_schema():
 async def health_check():
     return {
         "status": "active",
-        "version": "1.9.1",
+        "version": "1.9.2",
         "service": "TitanFlow Backend",
         "database": "connected"
     }
