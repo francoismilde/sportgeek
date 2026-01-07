@@ -13,6 +13,10 @@ class User(Base):
     
     # Stockage du profil complet (JSON) en texte
     profile_data = Column(Text, nullable=True)
+    
+    # [NOUVEAU] Mémoire du Coach IA
+    strategy_data = Column(Text, nullable=True)      # Stocke le JSON de la Stratégie
+    weekly_plan_data = Column(Text, nullable=True)   # Stocke le JSON de la Semaine Type
 
     workouts = relationship("WorkoutSession", back_populates="owner")
 

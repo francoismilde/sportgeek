@@ -26,16 +26,24 @@ with engine.connect() as connection:
         print("🛠️ Vérification des colonnes manquantes...")
         
         # --- MIGRATION WORKOUTS ---
-        # Ajout de energy_level
         connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"))
-        # Ajout de notes
         connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"))
-        print("✅ Table 'workout_sessions' vérifiée (energy_level, notes).")
+        connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"))
+        print("✅ Table 'workout_sessions' vérifiée.")
+
+        # --- MIGRATION SETS ---
+        connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
+        connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"))
+        print("✅ Table 'workout_sets' vérifiée.")
         
         # --- MIGRATION USERS ---
         # Ajout de profile_data pour la sauvegarde du profil
         connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
-        print("✅ Table 'users' vérifiée (profile_data).")
+        
+        # [NOUVEAU] Ajout des colonnes IA
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"))
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
+        print("✅ Table 'users' vérifiée (profile, strategy, weekly).")
         
         trans.commit()
         print("🎉 Migration terminée avec succès ! Tes tables sont à jour Coach.")

@@ -2,6 +2,10 @@ import os
 import json
 import google.generativeai as genai
 from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
+from app.core.database import get_db
+from app.dependencies import get_current_user
+from app.models import sql_models, schemas
 from app.models.schemas import (
     ProfileAuditRequest, ProfileAuditResponse, 
     StrategyResponse, WeeklyPlanResponse,
@@ -137,7 +141,6 @@ def get_weekly_planning_prompt(profile_data):
 def get_workout_generation_prompt(profile_data, context):
     """
     Génère une séance détaillée avec gestion stricte des MODES D'ENREGISTREMENT.
-    C'est ici que l'intelligence sportive se joue.
     """
     sport = profile_data.get('sport', 'Musculation')
     user_level = profile_data.get('level', 'Intermédiaire')
@@ -186,14 +189,6 @@ def get_workout_generation_prompt(profile_data, context):
                 "rest": 90,
                 "tips": "Dos droit, descendre sous la parallèle.",
                 "recording_mode": "LOAD_REPS"
-            }},
-            {{
-                "name": "Gainage Planche",
-                "sets": 3,
-                "reps": "45",
-                "rest": 60,
-                "tips": "Abdos contractés.",
-                "recording_mode": "ISOMETRIC_TIME"
             }}
         ],
         "cooldown": ["Etirement 1"]
@@ -203,7 +198,10 @@ def get_workout_generation_prompt(profile_data, context):
 # --- ROUTES ---
 
 @router.post("/audit", response_model=ProfileAuditResponse)
-async def audit_profile(payload: ProfileAuditRequest):
+async def audit_profile(
+    payload: ProfileAuditRequest,
+    current_user: sql_models.User = Depends(get_current_user)
+):
     if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
@@ -213,20 +211,69 @@ async def audit_profile(payload: ProfileAuditRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- STRATÉGIE (Lecture & Écriture Persistante) ---
+
+@router.get("/strategy", response_model=StrategyResponse)
+async def get_strategy(
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """Récupère la stratégie sauvegardée (si elle existe)."""
+    if not current_user.strategy_data:
+        # On renvoie une 404 light pour dire 'Pas de stratégie, génère-la'
+        raise HTTPException(status_code=404, detail="Aucune stratégie trouvée.")
+    try:
+        data = json.loads(current_user.strategy_data)
+        return data
+    except:
+        raise HTTPException(status_code=500, detail="Erreur lecture stratégie.")
+
 @router.post("/strategy", response_model=StrategyResponse)
-async def generate_strategy(payload: ProfileAuditRequest):
+async def generate_strategy(
+    payload: ProfileAuditRequest,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """Génère ET sauvegarde la stratégie."""
     if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
         response = model.generate_content(get_periodization_prompt(payload.profile_data))
-        return json.loads(response.text)
+        
+        # Validation JSON
+        strategy_data = json.loads(response.text)
+        
+        # Sauvegarde en BDD
+        current_user.strategy_data = json.dumps(strategy_data)
+        db.commit()
+        db.refresh(current_user)
+        
+        return strategy_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- PLANNING SEMAINE (Lecture & Écriture Persistante) ---
+
+@router.get("/week", response_model=WeeklyPlanResponse)
+async def get_week(
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """Récupère la semaine type sauvegardée."""
+    if not current_user.weekly_plan_data:
+         raise HTTPException(status_code=404, detail="Aucune semaine trouvée.")
+    try:
+        data = json.loads(current_user.weekly_plan_data)
+        return data
+    except:
+        raise HTTPException(status_code=500, detail="Erreur lecture semaine.")
+
 @router.post("/week", response_model=WeeklyPlanResponse)
-async def generate_week(payload: ProfileAuditRequest):
-    """Génère la semaine type."""
+async def generate_week(
+    payload: ProfileAuditRequest,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """Génère ET sauvegarde la semaine type."""
     if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
@@ -239,6 +286,11 @@ async def generate_week(payload: ProfileAuditRequest):
         
         if "schedule" not in result and isinstance(result, list):
             result = {"schedule": result, "reasoning": "Généré automatiquement."}
+        
+        # Sauvegarde en BDD
+        current_user.weekly_plan_data = json.dumps(result)
+        db.commit()
+        db.refresh(current_user)
             
         return result
     except Exception as e:
@@ -246,7 +298,10 @@ async def generate_week(payload: ProfileAuditRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/workout", response_model=AIWorkoutPlan)
-async def generate_workout(payload: GenerateWorkoutRequest):
+async def generate_workout(
+    payload: GenerateWorkoutRequest,
+    current_user: sql_models.User = Depends(get_current_user)
+):
     """Génère une séance détaillée."""
     if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
     try:
@@ -258,7 +313,6 @@ async def generate_workout(payload: GenerateWorkoutRequest):
         
         parsed_response = json.loads(response.text)
         
-        # --- FIX ROBUSTE POUR L'ERREUR LISTE ---
         if isinstance(parsed_response, list):
             if parsed_response:
                 parsed_response = parsed_response[0]
