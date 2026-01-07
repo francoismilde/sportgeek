@@ -23,6 +23,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # --- PROMPTS ---
 
 def get_profile_analysis_prompt(profile_data):
+    """Génère le prompt pour l'audit du profil."""
     profile_str = json.dumps(profile_data, ensure_ascii=False, indent=2)
     return f"""
     RÔLE : Tu es le Lead Sport Scientist d'une fédération olympique (TitanFlow).
@@ -42,6 +43,7 @@ def get_profile_analysis_prompt(profile_data):
     """
 
 def get_periodization_prompt(profile_data):
+    """Génère le prompt pour la stratégie de périodisation (JSON)."""
     today_str = date.today().strftime("%Y-%m-%d")
     profile_str = json.dumps(profile_data, ensure_ascii=False, indent=2)
     cycle_goal = profile_data.get('goal', 'Performance Générale')
@@ -83,9 +85,13 @@ def get_periodization_prompt(profile_data):
     """
 
 def get_weekly_planning_prompt(profile_data):
+    """Génère le prompt complexe pour la semaine type."""
+    
+    # 1. Extraction contextuelle
     user_sport = profile_data.get('sport', 'Musculation')
     avail = profile_data.get('availability', [])
     
+    # On reformate les dispos pour l'IA
     slots_context = []
     for slot in avail:
         if slot.get('isActive', False):
@@ -108,21 +114,25 @@ def get_weekly_planning_prompt(profile_data):
     - Objectif : {profile_data.get('goal')}
 
     === CONTRAINTES STRICTES (MATRICE DE DISPONIBILITÉ) ===
+    Tu DOIS respecter ces créneaux à la lettre. Si un jour n'est pas listé ci-dessous, c'est REPOS.
     {avail_json}
 
     RÈGLES D'ALLOCATION :
     1. Pour chaque créneau disponible, assigne une séance précise.
-    2. Respecte le "Type_Cible" imposé.
+    2. Respecte le "Type_Cible" imposé par l'utilisateur :
+       - "PPS" = Sport Spécifique (Terrain, Piste, Bassin).
+       - "PPG" = Renforcement / Muscu.
+       - "Libre" = Choisis le mieux adapté pour l'équilibre.
     3. Si pas de créneau dispo un jour -> "Type": "Repos", "Focus": "Récupération".
-    4. "RPE Cible" doit être un ENTIER.
+    4. "RPE Cible" doit être un ENTIER (ex: 0 pour Repos, 7 pour une séance). Ne jamais mettre null.
 
     FORMAT DE SORTIE (JSON OBJET) :
     {{
         "schedule": [
             {{ "Jour": "Lundi", "Créneau": "Soir", "Type": "Spécifique (PPS)", "Focus": "...", "RPE Cible": 7 }},
-            ... (14 entrées)
+            ... (14 entrées pour couvrir la semaine)
         ],
-        "reasoning": "Logique de la semaine."
+        "reasoning": "Explication courte de la logique de la semaine."
     }}
     """
 
@@ -200,13 +210,24 @@ async def generate_strategy(payload: ProfileAuditRequest):
 
 @router.post("/week", response_model=WeeklyPlanResponse)
 async def generate_week(payload: ProfileAuditRequest):
+    """Génère la semaine type."""
     if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
+        # On force le JSON
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
-        response = model.generate_content(get_weekly_planning_prompt(payload.profile_data))
-        return json.loads(response.text)
+        
+        prompt = get_weekly_planning_prompt(payload.profile_data)
+        response = model.generate_content(prompt)
+        
+        result = json.loads(response.text)
+        
+        if "schedule" not in result and isinstance(result, list):
+            result = {"schedule": result, "reasoning": "Généré automatiquement."}
+            
+        return result
     except Exception as e:
+        print(f"❌ Erreur Week Gen: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/workout", response_model=AIWorkoutPlan)
@@ -220,6 +241,18 @@ async def generate_workout(payload: GenerateWorkoutRequest):
         prompt = get_workout_generation_prompt(payload.profile_data, payload.context)
         response = model.generate_content(prompt)
         
-        return json.loads(response.text)
+        parsed_response = json.loads(response.text)
+        
+        # --- FIX ROBUSTE POUR L'ERREUR LISTE ---
+        # Si l'IA renvoie une liste au lieu d'un dict, on prend le premier élément
+        if isinstance(parsed_response, list):
+            if parsed_response:
+                parsed_response = parsed_response[0]
+            else:
+                # Si liste vide, on renvoie une erreur ou un objet vide par défaut
+                raise ValueError("L'IA a renvoyé une liste vide.")
+        
+        return parsed_response
     except Exception as e:
+        print(f"❌ Erreur Workout Gen: {e}")
         raise HTTPException(status_code=500, detail=str(e))
