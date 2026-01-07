@@ -22,7 +22,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="1.8.0", # Petite montée de version
+    version="1.9.0", # Montée de version
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -44,23 +44,27 @@ app.include_router(safety.router)
 app.include_router(coach.router)
 app.include_router(user.router)
 
-# --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR) ---
+# --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V2) ---
 @app.get("/fix_db", tags=["System"])
 def fix_database_schema():
     """
-    🛠️ ROUTE D'URGENCE : Met à jour la structure de la BDD.
-    Ajoute les colonnes manquantes (energy_level, notes, metric_type...)
-    sans supprimer les données existantes.
+    🛠️ ROUTE D'URGENCE V2 : Ajoute TOUTES les colonnes manquantes.
+    Inclus maintenant 'created_at' qui faisait planter le refresh.
     """
     try:
         with engine.connect() as connection:
             trans = connection.begin()
             
             # 1. Table WORKOUT_SESSIONS (Séances)
+            # Ajout des colonnes fonctionnelles
             connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"))
             connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"))
             
-            # 2. Table WORKOUT_SETS (Séries) - C'était LUI le coupable !
+            # [FIX CRITIQUE] Ajout du timestamp de création (C'était lui le coupable !)
+            # On utilise TIMESTAMPTZ pour être compatible avec DateTime(timezone=True)
+            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"))
+            
+            # 2. Table WORKOUT_SETS (Séries)
             connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
             connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"))
             
@@ -68,7 +72,7 @@ def fix_database_schema():
             connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
             
             trans.commit()
-            return {"status": "SUCCESS", "message": "✅ Base de données réparée : Colonnes manquantes ajoutées (Sessions + Sets + Users)."}
+            return {"status": "SUCCESS", "message": "✅ Base de données réparée : Colonne 'created_at' ajoutée !"}
             
     except Exception as e:
         return {"status": "ERROR", "message": f"❌ Erreur lors de la réparation : {str(e)}"}
@@ -78,7 +82,7 @@ def fix_database_schema():
 async def health_check():
     return {
         "status": "active",
-        "version": "1.8.0",
+        "version": "1.9.0",
         "service": "TitanFlow Backend",
         "database": "connected"
     }
