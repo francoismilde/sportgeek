@@ -2,7 +2,11 @@ import os
 import json
 import google.generativeai as genai
 from fastapi import APIRouter, HTTPException, Depends
-from app.models.schemas import ProfileAuditRequest, ProfileAuditResponse, StrategyResponse, WeeklyPlanResponse
+from app.models.schemas import (
+    ProfileAuditRequest, ProfileAuditResponse, 
+    StrategyResponse, WeeklyPlanResponse,
+    GenerateWorkoutRequest, AIWorkoutPlan
+)
 from dotenv import load_dotenv
 from datetime import date
 
@@ -19,7 +23,6 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # --- PROMPTS ---
 
 def get_profile_analysis_prompt(profile_data):
-    """Génère le prompt pour l'audit du profil."""
     profile_str = json.dumps(profile_data, ensure_ascii=False, indent=2)
     return f"""
     RÔLE : Tu es le Lead Sport Scientist d'une fédération olympique (TitanFlow).
@@ -39,7 +42,6 @@ def get_profile_analysis_prompt(profile_data):
     """
 
 def get_periodization_prompt(profile_data):
-    """Génère le prompt pour la stratégie de périodisation (JSON)."""
     today_str = date.today().strftime("%Y-%m-%d")
     profile_str = json.dumps(profile_data, ensure_ascii=False, indent=2)
     cycle_goal = profile_data.get('goal', 'Performance Générale')
@@ -81,13 +83,9 @@ def get_periodization_prompt(profile_data):
     """
 
 def get_weekly_planning_prompt(profile_data):
-    """Génère le prompt complexe pour la semaine type."""
-    
-    # 1. Extraction contextuelle
     user_sport = profile_data.get('sport', 'Musculation')
     avail = profile_data.get('availability', [])
     
-    # On reformate les dispos pour l'IA
     slots_context = []
     for slot in avail:
         if slot.get('isActive', False):
@@ -110,25 +108,69 @@ def get_weekly_planning_prompt(profile_data):
     - Objectif : {profile_data.get('goal')}
 
     === CONTRAINTES STRICTES (MATRICE DE DISPONIBILITÉ) ===
-    Tu DOIS respecter ces créneaux à la lettre. Si un jour n'est pas listé ci-dessous, c'est REPOS.
     {avail_json}
 
     RÈGLES D'ALLOCATION :
     1. Pour chaque créneau disponible, assigne une séance précise.
-    2. Respecte le "Type_Cible" imposé par l'utilisateur :
-       - "PPS" = Sport Spécifique (Terrain, Piste, Bassin).
-       - "PPG" = Renforcement / Muscu.
-       - "Libre" = Choisis le mieux adapté pour l'équilibre.
+    2. Respecte le "Type_Cible" imposé.
     3. Si pas de créneau dispo un jour -> "Type": "Repos", "Focus": "Récupération".
-    4. "RPE Cible" doit être un ENTIER (ex: 0 pour Repos, 7 pour une séance). Ne jamais mettre null.
+    4. "RPE Cible" doit être un ENTIER.
 
     FORMAT DE SORTIE (JSON OBJET) :
     {{
         "schedule": [
             {{ "Jour": "Lundi", "Créneau": "Soir", "Type": "Spécifique (PPS)", "Focus": "...", "RPE Cible": 7 }},
-            ... (14 entrées pour couvrir la semaine)
+            ... (14 entrées)
         ],
-        "reasoning": "Explication courte de la logique de la semaine."
+        "reasoning": "Logique de la semaine."
+    }}
+    """
+
+def get_workout_generation_prompt(profile_data, context):
+    """Génère une séance détaillée."""
+    sport = profile_data.get('sport', 'Musculation')
+    user_level = profile_data.get('level', 'Intermédiaire')
+    
+    duration = context.get('duration', 60)
+    energy = context.get('energy', 5)
+    focus = context.get('focus', 'Full Body')
+    equipment = context.get('equipment', 'Standard')
+
+    return f"""
+    RÔLE : Coach Sportif d'Élite (SmartCoach).
+    MISSION : Concevoir une séance sur-mesure (JSON).
+
+    ATHLÈTE :
+    - Sport : {sport} ({user_level})
+    - Blessures : {profile_data.get('injuries', 'Aucune')}
+    
+    CONTEXTE DU JOUR :
+    - Durée Max : {duration} min
+    - Énergie : {energy}/10
+    - Focus demandé : {focus}
+    - Matériel : {equipment}
+
+    INSTRUCTIONS TECHNIQUES :
+    1. Adapte le volume (Séries/Reps) à l'énergie du jour.
+    2. Choisis des exercices pertinents pour le matériel dispo.
+    3. "recording_mode" DOIT être choisi parmi : "LOAD_REPS" (Muscu), "PACE_DISTANCE" (Cardio/Run), "POWER_TIME" (Vélo), "BODYWEIGHT_REPS" (PdC), "ISOMETRIC_TIME" (Gainage).
+
+    STRUCTURE DE SORTIE (JSON STRICT) :
+    {{
+        "title": "Nom de la séance",
+        "coach_comment": "Phrase de motivation ou conseil technique.",
+        "warmup": ["Exo 1", "Exo 2"],
+        "exercises": [
+            {{
+                "name": "Squat",
+                "sets": 4,
+                "reps": "8-10",
+                "rest": 90,
+                "tips": "Dos droit, descendre sous la parallèle.",
+                "recording_mode": "LOAD_REPS"
+            }}
+        ],
+        "cooldown": ["Etirement 1"]
     }}
     """
 
@@ -158,22 +200,26 @@ async def generate_strategy(payload: ProfileAuditRequest):
 
 @router.post("/week", response_model=WeeklyPlanResponse)
 async def generate_week(payload: ProfileAuditRequest):
-    """Génère la semaine type."""
     if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        # On force le JSON
+        model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
+        response = model.generate_content(get_weekly_planning_prompt(payload.profile_data))
+        return json.loads(response.text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/workout", response_model=AIWorkoutPlan)
+async def generate_workout(payload: GenerateWorkoutRequest):
+    """Génère une séance détaillée."""
+    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
         
-        prompt = get_weekly_planning_prompt(payload.profile_data)
+        prompt = get_workout_generation_prompt(payload.profile_data, payload.context)
         response = model.generate_content(prompt)
         
-        result = json.loads(response.text)
-        
-        if "schedule" not in result and isinstance(result, list):
-            result = {"schedule": result, "reasoning": "Généré automatiquement."}
-            
-        return result
+        return json.loads(response.text)
     except Exception as e:
-        print(f"❌ Erreur Week Gen: {e}")
         raise HTTPException(status_code=500, detail=str(e))
