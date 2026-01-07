@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 # --- IMPORTS DES ROUTEURS ---
-# On ajoute 'coach' ici
-from app.routers import performance, safety, auth, workouts, coach
+# On ajoute 'user' ici
+from app.routers import performance, safety, auth, workouts, coach, user
 from app.core.database import engine, Base
 
 # Configuration des logs
@@ -22,7 +22,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="1.6.0",
+    version="1.7.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -41,13 +41,14 @@ app.include_router(auth.router)
 app.include_router(workouts.router)
 app.include_router(performance.router)
 app.include_router(safety.router)
-app.include_router(coach.router) # <--- C'EST CETTE LIGNE QUI MANQUAIT !
+app.include_router(coach.router)
+app.include_router(user.router) # <--- NOUVEAU ROUTEUR ENREGISTRÉ
 
 @app.get("/health", tags=["Health Check"])
 async def health_check():
     return {
         "status": "active",
-        "version": "1.6.0",
+        "version": "1.7.0",
         "service": "TitanFlow Backend",
         "database": "connected"
     }

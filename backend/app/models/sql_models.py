@@ -11,6 +11,9 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String)
     
+    # [NOUVEAU] Stockage du profil complet (JSON) en texte
+    profile_data = Column(Text, nullable=True)
+
     workouts = relationship("WorkoutSession", back_populates="owner")
 
 class WorkoutSession(Base):
@@ -22,8 +25,8 @@ class WorkoutSession(Base):
     date = Column(Date, index=True)
     duration = Column(Float)
     rpe = Column(Float)
-    energy_level = Column(Integer, default=5) # Ajout
-    notes = Column(Text, nullable=True)       # Ajout
+    energy_level = Column(Integer, default=5) 
+    notes = Column(Text, nullable=True)      
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     

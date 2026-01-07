@@ -87,6 +87,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     email: Optional[str] = None
+    profile_data: Optional[str] = None # Pour renvoyer le profil brut si besoin
     class Config:
         from_attributes = True
 
@@ -128,3 +129,7 @@ class WeeklySession(BaseModel):
 class WeeklyPlanResponse(BaseModel):
     schedule: List[WeeklySession]
     reasoning: str
+
+# [NOUVEAU] Schéma pour la mise à jour du profil
+class UserProfileUpdate(BaseModel):
+    profile_data: Dict[str, Any]
