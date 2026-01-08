@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import google.generativeai as genai
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
@@ -23,6 +24,23 @@ router = APIRouter(
 
 # Configuration unique de l'IA
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# --- UTILITAIRES ---
+
+def clean_ai_json(text: str) -> str:
+    """
+    Nettoie la réponse de l'IA pour extraire uniquement le bloc JSON valide.
+    Gère les cas où l'IA ajoute des balises markdown ```json ... ```.
+    """
+    try:
+        # On cherche le contenu entre ```json et ``` ou juste ``` et ```
+        pattern = r"```(?:json)?\s*([\s\S]*?)\s*```"
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).strip()
+        return text.strip()
+    except Exception:
+        return text
 
 # --- PROMPTS ---
 
@@ -207,6 +225,7 @@ async def audit_profile(
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash')
         response = model.generate_content(get_profile_analysis_prompt(payload.profile_data))
+        # Ici on garde le texte brut car c'est du Markdown
         return {"markdown_report": response.text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -219,7 +238,6 @@ async def get_strategy(
 ):
     """Récupère la stratégie sauvegardée (si elle existe)."""
     if not current_user.strategy_data:
-        # On renvoie une 404 light pour dire 'Pas de stratégie, génère-la'
         raise HTTPException(status_code=404, detail="Aucune stratégie trouvée.")
     try:
         data = json.loads(current_user.strategy_data)
@@ -240,8 +258,9 @@ async def generate_strategy(
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
         response = model.generate_content(get_periodization_prompt(payload.profile_data))
         
-        # Validation JSON
-        strategy_data = json.loads(response.text)
+        # Nettoyage et Validation JSON
+        clean_text = clean_ai_json(response.text)
+        strategy_data = json.loads(clean_text)
         
         # Sauvegarde en BDD
         current_user.strategy_data = json.dumps(strategy_data)
@@ -250,6 +269,7 @@ async def generate_strategy(
         
         return strategy_data
     except Exception as e:
+        print(f"❌ Erreur Strategy Gen: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- PLANNING SEMAINE (Lecture & Écriture Persistante) ---
@@ -282,7 +302,9 @@ async def generate_week(
         prompt = get_weekly_planning_prompt(payload.profile_data)
         response = model.generate_content(prompt)
         
-        result = json.loads(response.text)
+        # Nettoyage et Parsing
+        clean_text = clean_ai_json(response.text)
+        result = json.loads(clean_text)
         
         if "schedule" not in result and isinstance(result, list):
             result = {"schedule": result, "reasoning": "Généré automatiquement."}
@@ -347,7 +369,9 @@ async def generate_workout(
         prompt = get_workout_generation_prompt(payload.profile_data, payload.context)
         response = model.generate_content(prompt)
         
-        parsed_response = json.loads(response.text)
+        # Nettoyage et Parsing
+        clean_text = clean_ai_json(response.text)
+        parsed_response = json.loads(clean_text)
         
         if isinstance(parsed_response, list):
             if parsed_response:

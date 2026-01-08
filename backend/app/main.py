@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-from sqlalchemy import text # <--- Pour le script de réparation
+from sqlalchemy import text 
 
 # --- IMPORTS DES ROUTEURS ---
 from app.routers import performance, safety, auth, workouts, coach, user
@@ -22,7 +23,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="1.9.2", # Bump version pour le fix DB
+    version="1.9.3", # Bump pour marquer le fix de stabilité
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -35,6 +36,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- GLOBAL EXCEPTION HANDLER (ANTI-CRASH) ---
+# C'est ici qu'on empêche les erreurs 500 de masquer les headers CORS
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"🔥 CRASH GLOBAL NON GÉRÉ : {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Erreur serveur interne (TitanFlow Panic): {str(exc)}"},
+        headers={
+            # On force les headers CORS même en cas de crash
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
 
 # --- ROUTEURS ---
 app.include_router(auth.router)
@@ -88,7 +105,7 @@ def fix_database_schema():
 async def health_check():
     return {
         "status": "active",
-        "version": "1.9.2",
+        "version": "1.9.3",
         "service": "TitanFlow Backend",
         "database": "connected"
     }
