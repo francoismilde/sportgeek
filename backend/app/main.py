@@ -5,7 +5,8 @@ import logging
 from sqlalchemy import text 
 
 # --- IMPORTS DES ROUTEURS ---
-from app.routers import performance, safety, auth, workouts, coach, user
+# [MODIFICATION] Ajout de 'feed'
+from app.routers import performance, safety, auth, workouts, coach, user, feed
 from app.core.database import engine, Base
 
 # Configuration des logs
@@ -23,7 +24,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="1.9.3", # Bump pour marquer le fix de stabilité
+    version="1.9.4", # Bump Neural Feed
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -38,7 +39,6 @@ app.add_middleware(
 )
 
 # --- GLOBAL EXCEPTION HANDLER (ANTI-CRASH) ---
-# C'est ici qu'on empêche les erreurs 500 de masquer les headers CORS
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"🔥 CRASH GLOBAL NON GÉRÉ : {str(exc)}")
@@ -46,7 +46,6 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": f"Erreur serveur interne (TitanFlow Panic): {str(exc)}"},
         headers={
-            # On force les headers CORS même en cas de crash
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "*",
             "Access-Control-Allow-Headers": "*",
@@ -60,6 +59,8 @@ app.include_router(performance.router)
 app.include_router(safety.router)
 app.include_router(coach.router)
 app.include_router(user.router)
+# [MODIFICATION] Activation du Feed
+app.include_router(feed.router)
 
 # --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V4) ---
 @app.get("/fix_db", tags=["System"])
@@ -105,7 +106,7 @@ def fix_database_schema():
 async def health_check():
     return {
         "status": "active",
-        "version": "1.9.3",
+        "version": "1.9.4",
         "service": "TitanFlow Backend",
         "database": "connected"
     }
