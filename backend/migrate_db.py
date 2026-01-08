@@ -1,3 +1,5 @@
+# 📄 FICHIER : backend/migrate_db.py
+
 import os
 import sqlalchemy
 from sqlalchemy import text
@@ -49,6 +51,26 @@ with engine.connect() as connection:
         
         print("✅ Table 'users' vérifiée (profile, strategy, weekly, draft).")
         
+        # --- [DEV-CARD #01] MIGRATION FEED ---
+        # On crée la table feed_items si elle n'existe pas
+        # Note : On utilise UUID en String pour l'ID
+        create_feed_table_sql = """
+        CREATE TABLE IF NOT EXISTS feed_items (
+            id VARCHAR PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id),
+            type VARCHAR,
+            title VARCHAR,
+            message VARCHAR,
+            action_payload TEXT,
+            is_read BOOLEAN DEFAULT FALSE,
+            is_completed BOOLEAN DEFAULT FALSE,
+            priority INTEGER DEFAULT 1,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """
+        connection.execute(text(create_feed_table_sql))
+        print("✅ Table 'feed_items' vérifiée/créée.")
+
         trans.commit()
         print("🎉 Migration terminée avec succès ! Tes tables sont à jour Coach.")
         

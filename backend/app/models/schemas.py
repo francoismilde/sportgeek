@@ -1,7 +1,11 @@
+# 📄 FICHIER : backend/app/models/schemas.py
+
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any, Union
-from datetime import date
+from datetime import date, datetime
+from enum import Enum
 import re
+import json
 
 # --- SHARED ---
 class WorkoutSetBase(BaseModel):
@@ -174,3 +178,40 @@ class WeeklyPlanResponse(BaseModel):
 
 class UserProfileUpdate(BaseModel):
     profile_data: Dict[str, Any]
+
+# --- [DEV-CARD #01] NEURAL FEED SCHEMAS ---
+
+class FeedItemType(str, Enum):
+    INFO = "INFO"          # Juste du texte
+    ANALYSIS = "ANALYSIS"  # Lien vers un rapport
+    ACTION = "ACTION"      # Demande bloquante ou suggérée
+    ALERT = "ALERT"        # Sécurité / Santé
+
+class FeedItemBase(BaseModel):
+    type: FeedItemType
+    title: str
+    message: str
+    priority: int = 1
+    action_payload: Optional[Dict[str, Any]] = None
+
+class FeedItemCreate(FeedItemBase):
+    pass
+
+class FeedItemResponse(FeedItemBase):
+    id: str
+    is_read: bool
+    is_completed: bool
+    created_at: datetime
+
+    # Validateur pour parser le JSON string stocké en base en Dict Python
+    @field_validator('action_payload', mode='before')
+    def parse_payload(cls, v):
+        if isinstance(v, str) and v.strip():
+            try:
+                return json.loads(v)
+            except:
+                return None
+        return v
+
+    class Config:
+        from_attributes = True
