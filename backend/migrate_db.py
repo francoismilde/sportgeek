@@ -1,5 +1,3 @@
-# 📄 FICHIER : backend/migrate_db.py
-
 import os
 import sqlalchemy
 from sqlalchemy import text

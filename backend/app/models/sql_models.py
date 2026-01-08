@@ -1,5 +1,3 @@
-# 📄 FICHIER : backend/app/models/sql_models.py
-
 from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, DateTime, Text, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -24,7 +22,8 @@ class User(Base):
     draft_workout_data = Column(Text, nullable=True)
 
     workouts = relationship("WorkoutSession", back_populates="owner")
-    # [DEV-CARD #01] Relation avec le Feed
+    
+    # [DEV-CARD #01] Relation avec le Feed (Flux d'événements)
     feed_items = relationship("FeedItem", back_populates="owner", cascade="all, delete-orphan")
 
 class WorkoutSession(Base):
@@ -70,7 +69,7 @@ class WorkoutSet(Base):
     session = relationship("WorkoutSession", back_populates="sets")
 
 # [DEV-CARD #01] NEURAL FEED ARCHITECTURE
-class FeedItem(BaseModel):
+class FeedItem(Base):
     __tablename__ = "feed_items"
 
     id = Column(String, primary_key=True, index=True) # UUID stocké en String

@@ -1,5 +1,3 @@
-# 📄 FICHIER : backend/app/models/schemas.py
-
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any, Union
 from datetime import date, datetime
