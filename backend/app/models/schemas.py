@@ -70,6 +70,9 @@ class WorkoutSetResponse(WorkoutSetBase):
 
 class WorkoutSessionResponse(WorkoutSessionCreate):
     id: int
+    # [FIX DEV-CARD #07] On expose l'analyse IA
+    ai_analysis: Optional[str] = None
+    
     sets: List[WorkoutSetResponse] = []
     class Config:
         from_attributes = True
