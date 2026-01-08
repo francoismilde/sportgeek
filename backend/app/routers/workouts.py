@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 from app.core.database import get_db
 from app.models import sql_models, schemas
 from app.dependencies import get_current_user
+
+# [DEV-CARD #03] Imports du Moteur de Feed
+from app.services.feed.engine import TriggerEngine
+from app.services.feed.triggers.workout_analysis import WorkoutAnalysisTrigger
 
 router = APIRouter(
     prefix="/workouts",
@@ -20,6 +24,7 @@ async def create_workout(
     Enregistre une séance complète avec gestion du Polymorphisme (Metric Type).
     Vérifie la cohérence des données (ex: Watts max, RPE bounds).
     [DEV-CARD #05] Supprime le brouillon associé une fois la séance validée.
+    [DEV-CARD #03] Active le Neural Feed pour l'analyse post-séance.
     """
     # 1. Validation de haut niveau avant insertion
     for s in workout.sets:
@@ -74,6 +79,17 @@ async def create_workout(
         
         db.commit()
         db.refresh(db_workout)
+
+    # 4. [DEV-CARD #03] TRIGGER NEURAL FEED (L'IA s'active ici)
+    # On lance l'analyse immédiatement (await) pour que le feed soit à jour 
+    # quand l'utilisateur revient sur l'accueil.
+    try:
+        engine = TriggerEngine()
+        engine.register(WorkoutAnalysisTrigger())
+        await engine.run_all(db, current_user.id, {"workout": db_workout})
+    except Exception as e:
+        # On ne bloque pas la réponse si l'IA échoue, c'est du bonus
+        print(f"⚠️ Feed Engine Error: {e}")
     
     return db_workout
 
