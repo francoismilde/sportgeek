@@ -80,10 +80,16 @@ class GenerateWorkoutRequest(BaseModel):
 class AIExercise(BaseModel):
     name: str
     sets: int
-    reps: str 
+    # [FIX] On accepte int ou str en entrée, mais on force la conversion en str
+    reps: Union[str, int]
     rest: int
     tips: str
     recording_mode: str = "LOAD_REPS"
+
+    # [NOUVEAU] Validateur pour convertir "8" (int) en "8" (str) automatiquement
+    @field_validator('reps')
+    def force_string_reps(cls, v):
+        return str(v)
 
 class AIWorkoutPlan(BaseModel):
     title: str
