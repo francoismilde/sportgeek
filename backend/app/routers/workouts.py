@@ -4,6 +4,7 @@ from typing import List
 from app.core.database import get_db
 from app.models import sql_models, schemas
 from app.dependencies import get_current_user
+import json
 
 # [DEV-CARD #03] Imports du Moteur de Feed
 from app.services.feed.engine import TriggerEngine
@@ -84,9 +85,21 @@ async def create_workout(
     # On lance l'analyse immédiatement (await) pour que le feed soit à jour 
     # quand l'utilisateur revient sur l'accueil.
     try:
+        # [MODIF V2] On passe le profil complet dans le contexte via user_data
+        # On tente de parser le JSON profile_data s'il existe
+        profile_data = {}
+        if current_user.profile_data:
+            try:
+                profile_data = json.loads(current_user.profile_data)
+            except:
+                pass
+
         engine = TriggerEngine()
         engine.register(WorkoutAnalysisTrigger())
-        await engine.run_all(db, current_user.id, {"workout": db_workout})
+        await engine.run_all(db, current_user.id, {
+            "workout": db_workout,
+            "profile": profile_data # <--- ICI, on injecte les données pour le Bio-Twin
+        })
     except Exception as e:
         # On ne bloque pas la réponse si l'IA échoue, c'est du bonus
         print(f"⚠️ Feed Engine Error: {e}")

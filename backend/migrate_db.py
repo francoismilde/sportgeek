@@ -29,6 +29,9 @@ with engine.connect() as connection:
         connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"))
         connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"))
         connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"))
+        # [DEV-CARD #06] Ajout colonne analyse IA
+        connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS ai_analysis TEXT;"))
+        
         print("✅ Table 'workout_sessions' vérifiée.")
 
         # --- MIGRATION SETS ---

@@ -38,6 +38,9 @@ class WorkoutSession(Base):
     energy_level = Column(Integer, default=5) 
     notes = Column(Text, nullable=True)      
     
+    # [DEV-CARD #06] Stockage du rapport d'analyse IA complet (JSON)
+    ai_analysis = Column(Text, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relation One-to-Many
