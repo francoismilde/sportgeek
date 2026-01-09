@@ -21,59 +21,6 @@ async def create_workout(
     db: Session = Depends(get_db),
     current_user: sql_models.User = Depends(get_current_user)
 ):
-    # --- VALIDATION PHYSIOLOGIQUE ---
-    def validate_physiological_limits(workout: schemas.WorkoutSessionCreate):
-        """Valide les limites physiologiques humaines."""
-        
-        # Durée réaliste (10min à 4h)
-        if workout.duration < 10 or workout.duration > 240:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Durée invalide ({workout.duration} min). Doit être entre 10 et 240 minutes."
-            )
-        
-        # RPE 1-10
-        if workout.rpe < 1 or workout.rpe > 10:
-            raise HTTPException(
-                status_code=400,
-                detail=f"RPE invalide ({workout.rpe}). Doit être entre 1 et 10."
-            )
-        
-        # Énergie 1-10
-        if workout.energy_level < 1 or workout.energy_level > 10:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Niveau d'énergie invalide ({workout.energy_level}). Doit être entre 1 et 10."
-            )
-        
-        # Validation des sets
-        for s in workout.sets:
-            # Watts max (record du monde ~2500W)
-            if s.metric_type == 'POWER_TIME' and s.weight > 2000:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Puissance impossible ({s.weight}W). Record du monde ~2500W."
-                )
-            
-            # Charge max (record +500kg)
-            if s.metric_type == 'LOAD_REPS' and s.weight > 500:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Charge impossible ({s.weight}kg). Record du monde ~500kg."
-                )
-            
-            # RPE série
-            if s.rpe and (s.rpe < 1 or s.rpe > 10):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"RPE série invalide ({s.rpe}). Doit être entre 1 et 10."
-                )
-        
-        return True
-
-    # Appliquer la validation
-    validate_physiological_limits(workout)
-
     """
     Enregistre une séance complète avec gestion du Polymorphisme (Metric Type).
     Vérifie la cohérence des données (ex: Watts max, RPE bounds).

@@ -1,3 +1,4 @@
+from app.core.cache import cached_response, ai_cache
 import os
 import json
 import re
@@ -353,6 +354,7 @@ async def discard_draft_workout(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/workout", response_model=AIWorkoutPlan)
+@cached_response(ttl_hours=6)  # Cache de 6h pour les séances similaires
 async def generate_workout(
     payload: GenerateWorkoutRequest,
     db: Session = Depends(get_db),
