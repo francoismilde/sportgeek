@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 # --- IMPORTS DES ROUTEURS ---
 # [MODIFICATION] Ajout de 'feed'
-from app.routers import performance, safety, auth, workouts, coach, user, feed
+from app.routers import performance, safety, auth, workouts, coach, user, feed, profiles, profiles, athlete_profiles, coach_memories
 from app.core.database import engine, Base
 
 # Configuration des logs
@@ -24,7 +24,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="1.9.4", # Bump Neural Feed
+    version="2.0.0", # Neural Feed v2 - AthleteProfile version="1.9.4", # Bump Neural Feed CoachMemory
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -61,6 +61,10 @@ app.include_router(coach.router)
 app.include_router(user.router)
 # [MODIFICATION] Activation du Feed
 app.include_router(feed.router)
+app.include_router(profiles.router)
+app.include_router(profiles.router)
+app.include_router(athlete_profiles.router)
+app.include_router(coach_memories.router)
 
 # --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V4) ---
 @app.get("/fix_db", tags=["System"])

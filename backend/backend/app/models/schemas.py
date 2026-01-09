@@ -5,6 +5,7 @@ from enum import Enum
 import json
 
 # --- ENUMS & TYPES ---
+
 class SportType(str, Enum):
     RUGBY = "Rugby"
     FOOTBALL = "Football"
@@ -14,6 +15,7 @@ class SportType(str, Enum):
     OTHER = "Autre"
 
 # --- SUB-SCHEMAS FOR PROFILE ---
+
 class BasicInfo(BaseModel):
     pseudo: Optional[str] = None
     email: Optional[str] = None
@@ -39,6 +41,7 @@ class TrainingPreferences(BaseModel):
     preferred_split: str = "Upper/Lower"
 
 # --- MAIN PROFILE SCHEMAS ---
+
 class AthleteProfileBase(BaseModel):
     basic_info: BasicInfo = Field(default_factory=BasicInfo)
     physical_metrics: PhysicalMetrics = Field(default_factory=PhysicalMetrics)
@@ -60,6 +63,7 @@ class AthleteProfileResponse(AthleteProfileBase):
         from_attributes = True
 
 # --- MEMORY SCHEMAS ---
+
 class CoachMemoryResponse(BaseModel):
     id: int
     readiness_score: int = Field(alias="current_context", default={}).get("readiness_score", 0)
@@ -75,7 +79,8 @@ class CoachMemoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# --- LEGACY SCHEMAS ---
+# --- LEGACY SCHEMAS (KEPT FOR COMPATIBILITY) ---
+
 class WorkoutSetBase(BaseModel):
     exercise_name: str
     set_order: int
@@ -153,6 +158,7 @@ class AIWorkoutPlan(BaseModel):
     exercises: List[AIExercise]
     cooldown: List[str]
 
+# --- USER & AUTH ---
 class UserCreate(BaseModel):
     username: str
     email: Optional[str] = None
@@ -173,6 +179,7 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username: Optional[str] = None
 
+# --- FEED ---
 class FeedItemType(str, Enum):
     INFO = "INFO"
     ANALYSIS = "ANALYSIS"
