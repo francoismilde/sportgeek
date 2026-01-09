@@ -1,5 +1,3 @@
-from app.core.cache_fixed import cached_response_fixed
-from app.core.cache_fixed import cached_response_fixed as cached_response, ai_cache_fixed as ai_cache
 import os
 import json
 import re
@@ -222,14 +220,25 @@ async def audit_profile(
     payload: ProfileAuditRequest,
     current_user: sql_models.User = Depends(get_current_user)
 ):
-    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    """Audit du profil athlète par l'IA."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Clé API Gemini manquante.")
+    
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash')
         response = model.generate_content(get_profile_analysis_prompt(payload.profile_data))
-        # Ici on garde le texte brut car c'est du Markdown
+        
+        # Stocker l'audit localement
+        from app.core.database import get_db
+        from sqlalchemy.orm import Session
+        db = next(get_db())
+        current_user.profile_data = json.dumps(payload.profile_data)
+        db.commit()
+        
         return {"markdown_report": response.text}
     except Exception as e:
+        print(f"❌ Erreur audit: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- STRATÉGIE (Lecture & Écriture Persistante) ---
@@ -244,7 +253,8 @@ async def get_strategy(
     try:
         data = json.loads(current_user.strategy_data)
         return data
-    except:
+    except Exception as e:
+        print(f"❌ Erreur lecture stratégie: {e}")
         raise HTTPException(status_code=500, detail="Erreur lecture stratégie.")
 
 @router.post("/strategy", response_model=StrategyResponse)
@@ -254,7 +264,9 @@ async def generate_strategy(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """Génère ET sauvegarde la stratégie."""
-    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Clé API Gemini manquante.")
+    
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
@@ -286,7 +298,8 @@ async def get_week(
     try:
         data = json.loads(current_user.weekly_plan_data)
         return data
-    except:
+    except Exception as e:
+        print(f"❌ Erreur lecture semaine: {e}")
         raise HTTPException(status_code=500, detail="Erreur lecture semaine.")
 
 @router.post("/week", response_model=WeeklyPlanResponse)
@@ -296,7 +309,9 @@ async def generate_week(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """Génère ET sauvegarde la semaine type."""
-    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Clé API Gemini manquante.")
+    
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
@@ -328,7 +343,7 @@ async def get_draft_workout(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    [DEV-CARD #05] Récupère le brouillon de séance en cours (si existant).
+    Récupère le brouillon de séance en cours (si existant).
     Utile pour reprendre une session après un crash.
     """
     if not current_user.draft_workout_data:
@@ -336,7 +351,8 @@ async def get_draft_workout(
     
     try:
         return json.loads(current_user.draft_workout_data)
-    except:
+    except Exception as e:
+        print(f"❌ Erreur lecture brouillon: {e}")
         raise HTTPException(status_code=500, detail="Erreur lecture brouillon.")
 
 @router.delete("/workout/draft")
@@ -345,18 +361,17 @@ async def discard_draft_workout(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    [DEV-CARD #05-B] Supprime explicitement le brouillon (Abandon).
+    Supprime explicitement le brouillon (Abandon).
     """
     try:
         current_user.draft_workout_data = None
         db.commit()
         return {"status": "success", "message": "Brouillon supprimé."}
     except Exception as e:
+        print(f"❌ Erreur suppression brouillon: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/workout", response_model=AIWorkoutPlan)
-@cached_response(ttl_hours=6)  # Cache de 6h pour les séances similaires
-@cached_response_fixed(ttl_hours=6, ignore_args=["current_user"])
 async def generate_workout(
     payload: GenerateWorkoutRequest,
     db: Session = Depends(get_db),
@@ -365,7 +380,9 @@ async def generate_workout(
     """
     Génère une séance détaillée ET la sauvegarde en brouillon.
     """
-    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Clé API Gemini manquante.")
+    
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
@@ -377,18 +394,38 @@ async def generate_workout(
         clean_text = clean_ai_json(response.text)
         parsed_response = json.loads(clean_text)
         
+        # Validation de la structure
         if isinstance(parsed_response, list):
             if parsed_response:
                 parsed_response = parsed_response[0]
             else:
                 raise ValueError("L'IA a renvoyé une liste vide.")
         
-        # [DEV-CARD #05] Sauvegarde automatique du brouillon
+        # Validation des exercices
+        if "exercises" not in parsed_response:
+            parsed_response["exercises"] = []
+        
+        # S'assurer que chaque exercice a un recording_mode
+        for exercise in parsed_response["exercises"]:
+            if "recording_mode" not in exercise:
+                exercise["recording_mode"] = "LOAD_REPS"
+        
+        # Sauvegarde automatique du brouillon
         current_user.draft_workout_data = json.dumps(parsed_response)
         db.commit()
         db.refresh(current_user)
 
         return parsed_response
+    except json.JSONDecodeError as e:
+        print(f"❌ Erreur JSON IA: {e}")
+        print(f"Texte brut reçu: {clean_text[:500]}...")
+        raise HTTPException(
+            status_code=500, 
+            detail="L'IA a renvoyé une réponse invalide. Veuillez réessayer."
+        )
     except Exception as e:
         print(f"❌ Erreur Workout Gen: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Erreur lors de la génération: {str(e)}"
+        )
