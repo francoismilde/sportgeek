@@ -1,0 +1,2302 @@
+-e 
+================================================================================
+📄 FICHIER : README.md
+================================================================================
+
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/__init__.py
+================================================================================
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/core/__init__.py
+================================================================================
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/core/database.py
+================================================================================
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# 1. On récupère l'URL
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+
+# 2. Sécurité : si pas d'URL, on met du SQLite temporaire
+if not SQLALCHEMY_DATABASE_URL:
+    print("⚠️ DATABASE_URL absente. Mode SQLite temporaire.")
+    SQLALCHEMY_DATABASE_URL = "sqlite:///./sql_app.db"
+
+# 3. Correctif pour l'URL (postgres -> postgresql)
+if SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# 4. Création du moteur (Version Simplifiée pour éviter les Timeouts)
+connect_args = {}
+if "sqlite" in SQLALCHEMY_DATABASE_URL:
+    connect_args = {"check_same_thread": False}
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args=connect_args
+    # On a retiré pool_pre_ping pour tester la connexion brute
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/core/security.py
+================================================================================
+from datetime import datetime, timedelta
+from typing import Optional
+from jose import jwt
+from passlib.context import CryptContext
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Configuration
+SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret_key_if_env_missing")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+
+pwd_context = CryptContext(
+    schemes=["bcrypt"], 
+    deprecated="auto",
+    bcrypt__ident="2b"
+)
+
+def get_password_hash(password: str) -> str:
+    """Transforme un mot de passe en clair en hash sécurisé."""
+    return pwd_context.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Vérifie si le mot de passe correspond au hash."""
+    return pwd_context.verify(plain_password, hashed_password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    """Génère un Token JWT signé."""
+    to_encode = data.copy()
+    
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+        
+    to_encode.update({"exp": expire})
+    
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/dependencies.py
+================================================================================
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from sqlalchemy.orm import Session
+from app.core.database import get_db
+from app.core import security
+from app.models import sql_models, schemas
+
+# C'est ici qu'on dit à FastAPI où aller chercher le token si on ne l'a pas
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """
+    Cette fonction est un 'Dependency'. 
+    Elle sera appelée avant chaque route protégée.
+    1. Elle récupère le token.
+    2. Elle le décode.
+    3. Elle vérifie si l'utilisateur existe en BDD.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Impossible de valider les identifiants",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    try:
+        # Décodage du token
+        payload = jwt.decode(token, security.SECRET_KEY, algorithms=[security.ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+        
+    # Recherche de l'utilisateur en BDD
+    user = db.query(sql_models.User).filter(sql_models.User.username == username).first()
+    if user is None:
+        raise credentials_exception
+        
+    return user-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/domain/__init__.py
+================================================================================
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/domain/bioenergetics.py
+================================================================================
+import math
+from typing import Dict, Any, List
+
+class BioenergeticService:
+    """
+    Service de calcul physiologique (Bio-Twin v1).
+    Estime la dépense énergétique et les besoins nutritionnels post-effort.
+    Ne dépend PAS de l'IA, mais de formules métaboliques.
+    """
+
+    @staticmethod
+    def calculate_needs(profile_data: Dict[str, Any], workout_sets: List[Any], duration_min: float, rpe: float) -> Dict[str, Any]:
+        """
+        Calcule les KPIs physiologiques de la séance.
+        """
+        # 1. Extraction du profil (valeurs par défaut de sécurité)
+        weight = float(profile_data.get('weight', 70.0))
+        if weight <= 0: weight = 70.0
+        
+        gender = profile_data.get('gender', 'Homme')
+        
+        # 2. Estimation de la Dépense Énergétique (Kcal)
+        # Méthode A : Précise si Watts disponibles
+        total_work_kj = 0.0
+        has_power_data = False
+        
+        for s in workout_sets:
+            if s.metric_type == 'POWER_TIME':
+                # Watts * secondes / 1000 = kJ
+                # weight = watts, reps = duration(s) dans ce mode (selon schemas.py)
+                # Mais attention, le frontend envoie parfois des minutes converties.
+                # Dans sql_models/schemas, on a standardisé : weight=Watts, reps=Secondes (via validateur polymorphique)
+                watts = s.weight
+                seconds = s.reps 
+                total_work_kj += (watts * seconds) / 1000.0
+                has_power_data = True
+        
+        kcal_burn = 0.0
+        
+        if has_power_data:
+            # Rendement mécanique humain ~20-25% => x4 à x5 pour passer de kJ mécanique à kcal métabolique
+            # Formule standard: kJ * 1.1 est une approx basse, kJ / 4.18 * 4 (rendement) est mieux.
+            # Simplification robuste : kJ mécanique * 1.0 = Kcal métabolique (approx très courante en cyclisme)
+            kcal_burn = total_work_kj * 1.0 
+            # Si on ajoute le métabolisme de base pendant la durée... Restons sur l'activité pure.
+        else:
+            # Méthode B : Estimation METs (Metabolic Equivalent of Task)
+            # RPE 1-3 (Repos/Recup) : 3 METs
+            # RPE 4-6 (Endurance) : 6 METs
+            # RPE 7-8 (Seuil) : 9 METs
+            # RPE 9-10 (Max) : 12 METs
+            mets = 3.0
+            if rpe > 8: mets = 11.0
+            elif rpe > 6: mets = 9.0
+            elif rpe > 4: mets = 6.0
+            else: mets = 3.5
+            
+            # Formule : Kcal = METs * Poids(kg) * Durée(h)
+            duration_hours = duration_min / 60.0
+            kcal_burn = mets * weight * duration_hours
+
+        # 3. Partition Macro-nutritionnelle (Filières énergétiques)
+        # Ratio Glucides/Lipides dépend de l'intensité relative
+        # RPE élevé -> Glycolytique -> Besoin Glucides
+        carbs_ratio = 0.5 # 50% par défaut
+        
+        if rpe >= 8: carbs_ratio = 0.8  # 80% glucides
+        elif rpe >= 6: carbs_ratio = 0.6 # 60% glucides
+        elif rpe <= 4: carbs_ratio = 0.3 # 30% glucides (LIPOX max)
+        
+        kcal_carbs = kcal_burn * carbs_ratio
+        carbs_g = kcal_carbs / 4.0 # 4 kcal/g
+        
+        # 4. Protéines (Réparation tissulaire)
+        # Base : 0.3g / kg de poids de corps après une séance standard
+        # Boost si séance de force (RPE > 7)
+        protein_factor = 0.25
+        if rpe > 7: protein_factor = 0.35
+        
+        protein_g = weight * protein_factor
+        
+        # 5. Hydratation (Estimation sudation standard)
+        # ~10ml / min / kg est trop. 
+        # Standard : 0.5L à 1L par heure selon intensité.
+        sweat_rate_ml_h = 500
+        if rpe > 7: sweat_rate_ml_h = 800
+        water_ml = (duration_min / 60.0) * sweat_rate_ml_h
+
+        return {
+            "kcal_total": int(kcal_burn),
+            "carbs_g": int(carbs_g),
+            "protein_g": int(protein_g),
+            "water_ml": int(water_ml),
+            "source": "Wattmeter" if has_power_data else "METs Estimator"
+        }-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/domain/calculations.py
+================================================================================
+import math
+from abc import ABC, abstractmethod
+
+# --- STRATEGY PATTERN : MOTEUR 1RM ---
+
+class OneRepMaxStrategy(ABC):
+    """Interface abstraite pour les stratégies de calcul du 1RM."""
+    @abstractmethod
+    def calculate(self, weight: float, reps: int) -> float:
+        pass
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        pass
+
+class EpleyStrategy(OneRepMaxStrategy):
+    """Formule d'Epley : W * (1 + r/30)"""
+    def calculate(self, weight: float, reps: int) -> float:
+        return weight * (1 + reps / 30.0)
+
+    @property
+    def name(self) -> str:
+        return "Epley"
+
+class BrzyckiStrategy(OneRepMaxStrategy):
+    """Formule de Brzycki : W * (36 / (37 - r))"""
+    def calculate(self, weight: float, reps: int) -> float:
+        if reps >= 37: return 0.0
+        return weight * (36.0 / (37.0 - reps))
+
+    @property
+    def name(self) -> str:
+        return "Brzycki"
+
+class WathanStrategy(OneRepMaxStrategy):
+    """Formule de Wathan : Exponentielle"""
+    def calculate(self, weight: float, reps: int) -> float:
+        denominator = 48.8 + (53.8 * math.exp(-0.075 * reps))
+        if denominator == 0: return 0.0
+        return (100.0 * weight) / denominator
+
+    @property
+    def name(self) -> str:
+        return "Wathan"
+
+class OneRepMaxCalculator:
+    """Factory : Sélectionne la bonne stratégie selon le nombre de répétitions."""
+    @staticmethod
+    def get_strategy(reps: int) -> OneRepMaxStrategy:
+        if reps <= 5:
+            return EpleyStrategy()
+        elif reps <= 10:
+            return BrzyckiStrategy()
+        else:
+            return WathanStrategy()
+
+def calculate_1rm(weight: float, reps: int) -> dict:
+    """
+    Fonction principale exposée au reste de l'app.
+    """
+    if weight <= 0 or reps <= 0:
+        return {"1rm": 0.0, "method": "N/A"}
+    
+    if reps == 1:
+        return {"1rm": weight, "method": "Actual Lift"}
+        
+    if reps > 30:
+        return {"1rm": 0.0, "method": "Out of Range (>30)"}
+
+    strategy = OneRepMaxCalculator.get_strategy(reps)
+    one_rm_val = strategy.calculate(weight, reps)
+    
+    # Arrondi au 0.5kg le plus proche
+    final_val = round(one_rm_val * 2) / 2
+
+    return {
+        "1rm": final_val,
+        "method": strategy.name
+    }-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/domain/safety.py
+================================================================================
+import pandas as pd
+from datetime import date, timedelta
+import re
+
+def _safe_float(val):
+    """Helper pour convertir n'importe quoi en float."""
+    if val is None: return 0.0
+    try:
+        clean = str(val).replace(',', '.').strip()
+        match = re.search(r"[-+]?\d*\.\d+|\d+", clean)
+        return float(match.group()) if match else 0.0
+    except:
+        return 0.0
+
+def calculate_acwr(history_logs: list) -> dict:
+    """
+    Calcule le Ratio Aigu/Chronique (ACWR).
+    Entrée : Liste de dictionnaires (date, duration, rpe).
+    Sortie : Dict avec ratio, status, charges.
+    """
+    default_res = {
+        "ratio": 0.0,
+        "status": "Inactif",
+        "color": "gray",
+        "acute_load": 0,
+        "chronic_load": 0,
+        "message": "Pas assez de données."
+    }
+    
+    if not history_logs:
+        return default_res
+
+    try:
+        # 1. Création DataFrame
+        df = pd.DataFrame(history_logs)
+        
+        # Conversion et tri des dates
+        df['date_dt'] = pd.to_datetime(df['date'], errors='coerce').dt.floor('D')
+        df = df.dropna(subset=['date_dt']).sort_values('date_dt')
+        
+        if df.empty:
+            return default_res
+
+        # 2. Calcul de la charge (Load = Durée * RPE)
+        # On sécurise les valeurs
+        df['duration'] = df['duration'].apply(_safe_float)
+        df['rpe'] = df['rpe'].apply(_safe_float)
+        df['load'] = df['duration'] * df['rpe']
+        
+        # Agrégation par jour (si plusieurs séances le même jour)
+        daily_loads = df.groupby('date_dt')['load'].sum()
+        
+        # 3. Timeline Continue (J-27 à Aujourd'hui)
+        end_date = pd.Timestamp.now().floor('D')
+        idx_ref = pd.date_range(end=end_date, periods=28, freq='D')
+        
+        # On remplit les trous avec 0
+        timeline = daily_loads.reindex(idx_ref, fill_value=0)
+        
+        # 4. Calculs Fenêtres Glissantes
+        acute_avg = timeline.tail(7).mean()   # Fatigue (7j)
+        chronic_avg = timeline.mean()         # Forme (28j)
+        
+        # 5. Ratio
+        ratio = 0.0
+        if chronic_avg > 0:
+            ratio = acute_avg / chronic_avg
+        elif acute_avg > 0:
+            ratio = 2.0 # Reprise brutale
+            
+        # 6. Diagnostic
+        ratio = round(ratio, 2)
+        status, color, msg = "Inactif", "gray", "Reprends progressivement."
+        
+        if ratio > 0:
+            if ratio <= 0.80:
+                status, color, msg = "Sous-entraînement", "blue", "Charge faible."
+            elif 0.80 < ratio <= 1.30:
+                status, color, msg = "Optimal", "green", "Zone de progression."
+            elif 1.30 < ratio <= 1.50:
+                status, color, msg = "Surcharge", "orange", "Attention fatigue."
+            else:
+                status, color, msg = "DANGER", "red", "Pic de charge critique (>1.5)."
+
+        return {
+            "ratio": ratio,
+            "status": status,
+            "color": color,
+            "acute_load": int(acute_avg),
+            "chronic_load": int(chronic_avg),
+            "message": msg
+        }
+        
+    except Exception as e:
+        print(f"Erreur ACWR: {e}")
+        return default_res-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/main.py
+================================================================================
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+from sqlalchemy import text 
+
+# --- IMPORTS DES ROUTEURS ---
+# [MODIFICATION] Ajout de 'feed'
+from app.routers import performance, safety, auth, workouts, coach, user, feed
+from app.core.database import engine, Base
+
+# Configuration des logs
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- DATABASE INIT ---
+try:
+    logger.info("Tentative de création des tables SQL...")
+    Base.metadata.create_all(bind=engine)
+    logger.info("Tables vérifiées/créées.")
+except Exception as e:
+    logger.error(f"ERREUR CRITIQUE DÉMARRAGE DB : {e}")
+
+app = FastAPI(
+    title="TitanFlow API",
+    description="API Backend pour l'application TitanFlow",
+    version="1.9.4", # Bump Neural Feed
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# Configuration CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- GLOBAL EXCEPTION HANDLER (ANTI-CRASH) ---
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"🔥 CRASH GLOBAL NON GÉRÉ : {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Erreur serveur interne (TitanFlow Panic): {str(exc)}"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
+
+# --- ROUTEURS ---
+app.include_router(auth.router)
+app.include_router(workouts.router)
+app.include_router(performance.router)
+app.include_router(safety.router)
+app.include_router(coach.router)
+app.include_router(user.router)
+# [MODIFICATION] Activation du Feed
+app.include_router(feed.router)
+
+# --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V4) ---
+@app.get("/fix_db", tags=["System"])
+def fix_database_schema():
+    """
+    🛠️ ROUTE D'URGENCE V4 : Ajoute TOUTES les colonnes manquantes.
+    Inclus maintenant draft_workout_data pour réparer le crash Login.
+    """
+    try:
+        with engine.connect() as connection:
+            trans = connection.begin()
+            
+            # 1. Table WORKOUT_SESSIONS (Séances)
+            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"))
+            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"))
+            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"))
+            
+            # 2. Table WORKOUT_SETS (Séries)
+            connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
+            connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"))
+            
+            # 3. Table USERS (Profil)
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
+            
+            # Mémoire IA
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"))
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
+            
+            # [FIX CRITIQUE] Ajout du brouillon
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"))
+            
+            trans.commit()
+            return {
+                "status": "SUCCESS", 
+                "message": "✅ Base de données réparée : Colonne 'draft_workout_data' ajoutée !"
+            }
+            
+    except Exception as e:
+        return {"status": "ERROR", "message": f"❌ Erreur lors de la réparation : {str(e)}"}
+
+
+@app.get("/health", tags=["Health Check"])
+async def health_check():
+    return {
+        "status": "active",
+        "version": "1.9.4",
+        "service": "TitanFlow Backend",
+        "database": "connected"
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/models/__init__.py
+================================================================================
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/models/schemas.py
+================================================================================
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional, Dict, Any, Union
+from datetime import date, datetime
+from enum import Enum
+import re
+import json
+
+# --- SHARED ---
+class WorkoutSetBase(BaseModel):
+    exercise_name: str
+    set_order: int
+    
+    # On accepte float ou str pour gérer les entrées type "5:30" (Pace)
+    # Mais le modèle nettoiera ça en float pour la suite
+    weight: Union[float, str] = 0.0
+    reps: Union[float, str] = 0.0
+    
+    rpe: Optional[float] = 0.0
+    rest_seconds: int = 0
+    metric_type: str = "LOAD_REPS" # C'est notre recording_mode
+
+    @field_validator('weight', 'reps', mode='before')
+    def parse_polymorphic_fields(cls, v):
+        """
+        Convertit les formats humains (MM:SS) en secondes (float)
+        et nettoie les chaînes en nombres.
+        """
+        if isinstance(v, str):
+            v = v.strip().replace(',', '.')
+            # Cas du format MM:SS ou HH:MM:SS
+            if ':' in v:
+                parts = v.split(':')
+                try:
+                    seconds = 0.0
+                    if len(parts) == 2: # MM:SS
+                        seconds = float(parts[0]) * 60 + float(parts[1])
+                    elif len(parts) == 3: # HH:MM:SS
+                        seconds = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                    return seconds
+                except ValueError:
+                    return 0.0
+            # Cas standard nombre string "10.5"
+            try:
+                return float(v)
+            except ValueError:
+                return 0.0
+        return v
+
+# --- INPUTS (Création) ---
+class WorkoutSetCreate(WorkoutSetBase):
+    pass
+
+class WorkoutSessionCreate(BaseModel):
+    date: date
+    duration: float
+    rpe: float
+    energy_level: int = 5
+    notes: Optional[str] = None
+    sets: List[WorkoutSetCreate] = []
+
+# --- OUTPUTS (Lecture) ---
+class WorkoutSetResponse(WorkoutSetBase):
+    id: int
+    # On force le type float en sortie pour la cohérence JSON
+    weight: float
+    reps: float
+    
+    class Config:
+        from_attributes = True
+
+class WorkoutSessionResponse(WorkoutSessionCreate):
+    id: int
+    # [FIX DEV-CARD #07] On expose l'analyse IA complète
+    ai_analysis: Optional[str] = None
+    sets: List[WorkoutSetResponse] = []
+    class Config:
+        from_attributes = True
+
+# --- AI GENERATION SCHEMAS ---
+class GenerateWorkoutRequest(BaseModel):
+    profile_data: Dict[str, Any]
+    context: Dict[str, Any]
+
+class AIExercise(BaseModel):
+    name: str
+    sets: int
+    # [FIX] On accepte int ou str en entrée, mais on force la conversion en str
+    reps: Union[str, int]
+    rest: int
+    tips: str
+    recording_mode: str = "LOAD_REPS"
+
+    # [NOUVEAU] Validateur pour convertir "8" (int) en "8" (str) automatiquement
+    @field_validator('reps')
+    def force_string_reps(cls, v):
+        return str(v)
+
+class AIWorkoutPlan(BaseModel):
+    title: str
+    coach_comment: str
+    warmup: List[str]
+    exercises: List[AIExercise]
+    cooldown: List[str]
+
+# --- OTHER SCHEMAS (Keep existing ones) ---
+class OneRepMaxRequest(BaseModel):
+    weight: float
+    reps: int
+
+class OneRepMaxResponse(BaseModel):
+    estimated_1rm: float
+    method_used: str
+    input_weight: float
+    input_reps: int
+
+class ACWRRequest(BaseModel):
+    history: List[Dict[str, Any]]
+
+class ACWRResponse(BaseModel):
+    ratio: float
+    status: str
+    color: str
+    acute_load: int
+    chronic_load: int
+    message: str
+
+class UserCreate(BaseModel):
+    username: str
+    email: Optional[str] = None
+    password: str
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: Optional[str] = None
+    profile_data: Optional[str] = None 
+    class Config:
+        from_attributes = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+class ProfileAuditRequest(BaseModel):
+    profile_data: Dict[str, Any]
+
+class ProfileAuditResponse(BaseModel):
+    markdown_report: str
+
+class Phase(BaseModel):
+    phase_name: str
+    focus: str
+    intensity_metric: str
+    volume_strategy: str
+    start: str
+    end: str
+
+class StrategyResponse(BaseModel):
+    periodization_title: str
+    periodization_logic: str
+    progression_model: str
+    recommended_frequency: int
+    phases: List[Phase]
+
+class WeeklySession(BaseModel):
+    day: str = Field(..., alias="Jour")
+    slot: str = Field(..., alias="Créneau")
+    type: str = Field(..., alias="Type") 
+    focus: str = Field(..., alias="Focus")
+    rpe_target: Optional[int] = Field(0, alias="RPE Cible")
+
+class WeeklyPlanResponse(BaseModel):
+    schedule: List[WeeklySession]
+    reasoning: str
+
+class UserProfileUpdate(BaseModel):
+    profile_data: Dict[str, Any]
+
+# --- [DEV-CARD #01] NEURAL FEED SCHEMAS ---
+
+class FeedItemType(str, Enum):
+    INFO = "INFO"          # Juste du texte
+    ANALYSIS = "ANALYSIS"  # Lien vers un rapport
+    ACTION = "ACTION"      # Demande bloquante ou suggérée
+    ALERT = "ALERT"        # Sécurité / Santé
+
+class FeedItemBase(BaseModel):
+    type: FeedItemType
+    title: str
+    message: str
+    priority: int = 1
+    action_payload: Optional[Dict[str, Any]] = None
+
+class FeedItemCreate(FeedItemBase):
+    pass
+
+class FeedItemResponse(FeedItemBase):
+    id: str
+    is_read: bool
+    is_completed: bool
+    created_at: datetime
+
+    # Validateur pour parser le JSON string stocké en base en Dict Python
+    @field_validator('action_payload', mode='before')
+    def parse_payload(cls, v):
+        if isinstance(v, str) and v.strip():
+            try:
+                return json.loads(v)
+            except:
+                return None
+        return v
+
+    class Config:
+        from_attributes = True-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/models/sql_models.py
+================================================================================
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, DateTime, Text, Boolean
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+from app.core.database import Base
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=True)
+    hashed_password = Column(String)
+    
+    # Stockage du profil complet (JSON) en texte
+    profile_data = Column(Text, nullable=True)
+    
+    # [NOUVEAU] Mémoire du Coach IA
+    strategy_data = Column(Text, nullable=True)      # Stocke le JSON de la Stratégie
+    weekly_plan_data = Column(Text, nullable=True)   # Stocke le JSON de la Semaine Type
+    
+    # [DEV-CARD #05] Brouillon de séance (Persistance en cas de crash)
+    draft_workout_data = Column(Text, nullable=True)
+
+    workouts = relationship("WorkoutSession", back_populates="owner")
+    
+    # [DEV-CARD #01] Relation avec le Feed (Flux d'événements)
+    feed_items = relationship("FeedItem", back_populates="owner", cascade="all, delete-orphan")
+
+class WorkoutSession(Base):
+    __tablename__ = "workout_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    
+    date = Column(Date, index=True)
+    duration = Column(Float)
+    rpe = Column(Float)
+    energy_level = Column(Integer, default=5) 
+    notes = Column(Text, nullable=True)      
+    
+    # [DEV-CARD #06] Stockage du rapport d'analyse IA complet (JSON)
+    ai_analysis = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relation One-to-Many
+    owner = relationship("User", back_populates="workouts")
+    sets = relationship("WorkoutSet", back_populates="session", cascade="all, delete-orphan")
+
+class WorkoutSet(Base):
+    __tablename__ = "workout_sets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("workout_sessions.id"))
+    
+    exercise_name = Column(String, index=True)
+    set_order = Column(Integer)
+    weight = Column(Float, default=0.0)
+    
+    # [POLYMORPHISME] 
+    # reps peut stocker : Répétitions (int), Durée (s), Distance (m) selon le mode
+    reps = Column(Float, default=0.0)
+    
+    rpe = Column(Float, default=0.0)
+    rest_seconds = Column(Integer, default=0)
+    
+    # [CŒUR DU SYSTÈME]
+    # Définit comment interpréter 'weight' et 'reps'.
+    # Valeurs possibles : LOAD_REPS, ISOMETRIC_TIME, PACE_DISTANCE, POWER_TIME, BODYWEIGHT_REPS
+    metric_type = Column(String, nullable=False, default="LOAD_REPS") 
+    
+    session = relationship("WorkoutSession", back_populates="sets")
+
+# [DEV-CARD #01] NEURAL FEED ARCHITECTURE
+class FeedItem(Base):
+    __tablename__ = "feed_items"
+
+    id = Column(String, primary_key=True, index=True) # UUID stocké en String
+    user_id = Column(Integer, ForeignKey("users.id"))
+    
+    type = Column(String, index=True) # INFO, ANALYSIS, ACTION, ALERT
+    title = Column(String)
+    message = Column(String)
+    
+    # Stockage flexible du payload d'action (JSON stringifié)
+    # Ex: {"route": "/profile", "args": {"missing": "weight"}}
+    action_payload = Column(Text, nullable=True)
+    
+    is_read = Column(Boolean, default=False)
+    is_completed = Column(Boolean, default=False)
+    
+    priority = Column(Integer, default=1) # 1 (Low) à 10 (Critical)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    owner = relationship("User", back_populates="feed_items")-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/routers/__init__.py
+================================================================================
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/routers/auth.py
+================================================================================
+from datetime import timedelta
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from app.core.database import get_db
+from app.models import sql_models, schemas
+from app.core import security
+
+router = APIRouter(
+    prefix="/auth",
+    tags=["Authentication"]
+)
+
+@router.post("/signup", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    """Inscription d'un nouvel utilisateur."""
+    # 1. Vérifier si le pseudo existe déjà
+    db_user = db.query(sql_models.User).filter(sql_models.User.username == user.username).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Ce pseudo est déjà pris.")
+    
+    # 2. Hasher le mot de passe
+    hashed_pwd = security.get_password_hash(user.password)
+    
+    # 3. Créer l'utilisateur avec l'email
+    new_user = sql_models.User(
+        username=user.username,
+        email=user.email,  # <--- On passe l'email ici
+        hashed_password=hashed_pwd
+    )
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return new_user
+
+@router.post("/token", response_model=schemas.Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """Login : Vérifie pseudo/mot de passe et renvoie un Token JWT."""
+    user = db.query(sql_models.User).filter(sql_models.User.username == form_data.username).first()
+    
+    if not user or not security.verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Pseudo ou mot de passe incorrect",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = security.create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    
+    return {"access_token": access_token, "token_type": "bearer"}-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/routers/coach.py
+================================================================================
+import os
+import json
+import re
+import google.generativeai as genai
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
+from app.core.database import get_db
+from app.dependencies import get_current_user
+from app.models import sql_models, schemas
+from app.models.schemas import (
+    ProfileAuditRequest, ProfileAuditResponse, 
+    StrategyResponse, WeeklyPlanResponse,
+    GenerateWorkoutRequest, AIWorkoutPlan
+)
+from dotenv import load_dotenv
+from datetime import date
+
+load_dotenv()
+
+router = APIRouter(
+    prefix="/coach",
+    tags=["AI Coach"]
+)
+
+# Configuration unique de l'IA
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# --- UTILITAIRES ---
+
+def clean_ai_json(text: str) -> str:
+    """
+    Nettoie la réponse de l'IA pour extraire uniquement le bloc JSON valide.
+    Gère les cas où l'IA ajoute des balises markdown ```json ... ```.
+    """
+    try:
+        # On cherche le contenu entre ```json et ``` ou juste ``` et ```
+        pattern = r"```(?:json)?\s*([\s\S]*?)\s*```"
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).strip()
+        return text.strip()
+    except Exception:
+        return text
+
+# --- PROMPTS ---
+
+def get_profile_analysis_prompt(profile_data):
+    """Génère le prompt pour l'audit du profil."""
+    profile_str = json.dumps(profile_data, ensure_ascii=False, indent=2)
+    return f"""
+    RÔLE : Tu es le Lead Sport Scientist d'une fédération olympique (TitanFlow).
+    TACHE : Auditer le profil d'un athlète et DÉFINIR LA LIGNE DIRECTRICE.
+    
+    DONNÉES BRUTES ATHLÈTE (JSON) :
+    {profile_str}
+
+    CONSIGNES D'ANALYSE :
+    1. Vérifie la cohérence "Niveau vs Performances".
+    2. Vérifie la cohérence "Objectif vs Logistique (Dispo)".
+    3. Identifie les risques de blessures ou les incohérences majeures.
+    
+    FORMAT DE SORTIE :
+    Réponds UNIQUEMENT en Markdown bien formaté.
+    Utilise des emojis. Sois direct, bienveillant mais exigeant.
+    """
+
+def get_periodization_prompt(profile_data):
+    """Génère le prompt pour la stratégie de périodisation (JSON)."""
+    today_str = date.today().strftime("%Y-%m-%d")
+    profile_str = json.dumps(profile_data, ensure_ascii=False, indent=2)
+    cycle_goal = profile_data.get('goal', 'Performance Générale')
+    target_date_str = profile_data.get('target_date', '2025-12-31')
+
+    return f"""
+    RÔLE : Directeur de Performance Sportive (Haut Niveau).
+    CONTEXTE : Créer une PÉRIODISATION MACRO (Les Grandes Phases) pour un athlète.
+
+    1. DONNÉES ATHLÈTE :
+    {profile_str}
+
+    2. PARAMÈTRES DU CYCLE :
+    - Objectif : {cycle_goal}
+    - Date actuelle : {today_str}
+    - Deadline : {target_date_str}
+
+    CONSIGNES DE PÉRIODISATION :
+    - Divise la période en BLOCS (PHASES) de 3 à 8 semaines.
+    - Génère entre 3 et 6 phases majeures.
+
+    STRUCTURE DE SORTIE (JSON STRICT) :
+    {{
+        "periodization_title": "Nom scientifique",
+        "periodization_logic": "Justification courte.",
+        "progression_model": "Ex: RPE Progression.",
+        "recommended_frequency": 4, 
+        "phases": [
+            {{
+                "phase_name": "Phase 1 : [Nom]",
+                "focus": "Objectif physiologique",
+                "intensity_metric": "RPE 7-8", 
+                "volume_strategy": "Ex: Volume Élevé",
+                "start": "YYYY-MM-DD",
+                "end": "YYYY-MM-DD"
+            }}
+        ]
+    }}
+    """
+
+def get_weekly_planning_prompt(profile_data):
+    """Génère le prompt complexe pour la semaine type."""
+    
+    user_sport = profile_data.get('sport', 'Musculation')
+    avail = profile_data.get('availability', [])
+    
+    slots_context = []
+    for slot in avail:
+        if slot.get('isActive', False): # Adaptation au format Flutter (isActive vs Active)
+             slots_context.append({
+                "Jour": slot.get('day'),
+                "Moment": slot.get('moment'),
+                "Dispo_Max": f"{slot.get('duration')} min",
+                "Type_Cible": slot.get('type')
+            })
+    
+    avail_json = json.dumps(slots_context, ensure_ascii=False, indent=2)
+
+    return f"""
+    RÔLE : Entraîneur Expert en {user_sport}.
+    MISSION : Générer la SEMAINE TYPE (Lundi-Dimanche) pour cet athlète.
+
+    CONTEXTE ATHLÈTE :
+    - Sport : {user_sport}
+    - Niveau : {profile_data.get('level')}
+    - Objectif : {profile_data.get('goal')}
+
+    === CONTRAINTES STRICTES (MATRICE DE DISPONIBILITÉ) ===
+    Tu DOIS respecter ces créneaux à la lettre. Si un jour n'est pas listé ci-dessous, c'est REPOS.
+    {avail_json}
+
+    RÈGLES D'ALLOCATION :
+    1. Pour chaque créneau disponible, assigne une séance précise.
+    2. Respecte le "Type_Cible" imposé par l'utilisateur :
+       - "PPS" = Sport Spécifique (Terrain, Piste, Bassin).
+       - "PPG" = Renforcement / Muscu.
+       - "Libre" = Choisis le mieux adapté pour l'équilibre.
+    3. Si pas de créneau dispo un jour -> "Type": "Repos", "Focus": "Récupération".
+    4. "RPE Cible" doit être un ENTIER (ex: 0 pour Repos, 7 pour une séance). Ne jamais mettre null.
+
+    FORMAT DE SORTIE (JSON OBJET) :
+    {{
+        "schedule": [
+            {{ "Jour": "Lundi", "Créneau": "Soir", "Type": "Spécifique (PPS)", "Focus": "...", "RPE Cible": 7 }},
+            ... (14 entrées pour couvrir la semaine)
+        ],
+        "reasoning": "Explication courte de la logique de la semaine."
+    }}
+    """
+
+def get_workout_generation_prompt(profile_data, context):
+    """
+    Génère une séance détaillée avec gestion stricte des MODES D'ENREGISTREMENT.
+    """
+    sport = profile_data.get('sport', 'Musculation')
+    user_level = profile_data.get('level', 'Intermédiaire')
+    
+    duration = context.get('duration', 60)
+    energy = context.get('energy', 5)
+    focus = context.get('focus', 'Full Body')
+    equipment = context.get('equipment', 'Standard')
+
+    return f"""
+    RÔLE : Coach Sportif d'Élite (SmartCoach).
+    MISSION : Concevoir une séance sur-mesure (JSON).
+
+    ATHLÈTE :
+    - Sport : {sport} ({user_level})
+    - Blessures : {profile_data.get('injuries', 'Aucune')}
+    
+    CONTEXTE DU JOUR :
+    - Durée Max : {duration} min
+    - Énergie : {energy}/10
+    - Focus demandé : {focus}
+    - Matériel : {equipment}
+
+    INSTRUCTIONS TECHNIQUES CRITIQUES :
+    1. Adapte le volume (Séries/Reps) à l'énergie du jour.
+    2. Pour CHAQUE exercice, tu DOIS choisir le 'recording_mode' adapté à la nature de l'effort :
+       - "LOAD_REPS" : Pour la musculation classique (Haltères, Barres, Machines). Champs : Poids/Reps.
+       - "BODYWEIGHT_REPS" : Pour le poids du corps (Pompes, Tractions). Champs : Lest/Reps.
+       - "ISOMETRIC_TIME" : Pour le statique (Gainage, Chaise). Champs : Lest/Temps(s).
+       - "PACE_DISTANCE" : Pour le Cardio/Running/Natation. Champs : Allure/Distance(m).
+       - "POWER_TIME" : Pour le Vélo/Ergo. Champs : Watts/Temps(s).
+    
+    3. Le champ 'reps' peut être une string (ex: "10-12" ou "AMRAP") ou un nombre.
+    4. Le champ 'rest' est en secondes.
+
+    STRUCTURE DE SORTIE (JSON STRICT) :
+    {{
+        "title": "Nom de la séance",
+        "coach_comment": "Phrase de motivation ou conseil technique.",
+        "warmup": ["Exo 1", "Exo 2"],
+        "exercises": [
+            {{
+                "name": "Squat",
+                "sets": 4,
+                "reps": "8-10",
+                "rest": 90,
+                "tips": "Dos droit, descendre sous la parallèle.",
+                "recording_mode": "LOAD_REPS"
+            }}
+        ],
+        "cooldown": ["Etirement 1"]
+    }}
+    """
+
+# --- ROUTES ---
+
+@router.post("/audit", response_model=ProfileAuditResponse)
+async def audit_profile(
+    payload: ProfileAuditRequest,
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(get_profile_analysis_prompt(payload.profile_data))
+        # Ici on garde le texte brut car c'est du Markdown
+        return {"markdown_report": response.text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- STRATÉGIE (Lecture & Écriture Persistante) ---
+
+@router.get("/strategy", response_model=StrategyResponse)
+async def get_strategy(
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """Récupère la stratégie sauvegardée (si elle existe)."""
+    if not current_user.strategy_data:
+        raise HTTPException(status_code=404, detail="Aucune stratégie trouvée.")
+    try:
+        data = json.loads(current_user.strategy_data)
+        return data
+    except:
+        raise HTTPException(status_code=500, detail="Erreur lecture stratégie.")
+
+@router.post("/strategy", response_model=StrategyResponse)
+async def generate_strategy(
+    payload: ProfileAuditRequest,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """Génère ET sauvegarde la stratégie."""
+    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
+        response = model.generate_content(get_periodization_prompt(payload.profile_data))
+        
+        # Nettoyage et Validation JSON
+        clean_text = clean_ai_json(response.text)
+        strategy_data = json.loads(clean_text)
+        
+        # Sauvegarde en BDD
+        current_user.strategy_data = json.dumps(strategy_data)
+        db.commit()
+        db.refresh(current_user)
+        
+        return strategy_data
+    except Exception as e:
+        print(f"❌ Erreur Strategy Gen: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- PLANNING SEMAINE (Lecture & Écriture Persistante) ---
+
+@router.get("/week", response_model=WeeklyPlanResponse)
+async def get_week(
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """Récupère la semaine type sauvegardée."""
+    if not current_user.weekly_plan_data:
+         raise HTTPException(status_code=404, detail="Aucune semaine trouvée.")
+    try:
+        data = json.loads(current_user.weekly_plan_data)
+        return data
+    except:
+        raise HTTPException(status_code=500, detail="Erreur lecture semaine.")
+
+@router.post("/week", response_model=WeeklyPlanResponse)
+async def generate_week(
+    payload: ProfileAuditRequest,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """Génère ET sauvegarde la semaine type."""
+    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
+        
+        prompt = get_weekly_planning_prompt(payload.profile_data)
+        response = model.generate_content(prompt)
+        
+        # Nettoyage et Parsing
+        clean_text = clean_ai_json(response.text)
+        result = json.loads(clean_text)
+        
+        if "schedule" not in result and isinstance(result, list):
+            result = {"schedule": result, "reasoning": "Généré automatiquement."}
+        
+        # Sauvegarde en BDD
+        current_user.weekly_plan_data = json.dumps(result)
+        db.commit()
+        db.refresh(current_user)
+            
+        return result
+    except Exception as e:
+        print(f"❌ Erreur Week Gen: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- GESTION DES SÉANCES & BROUILLONS ---
+
+@router.get("/workout/draft", response_model=AIWorkoutPlan)
+async def get_draft_workout(
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    [DEV-CARD #05] Récupère le brouillon de séance en cours (si existant).
+    Utile pour reprendre une session après un crash.
+    """
+    if not current_user.draft_workout_data:
+        raise HTTPException(status_code=404, detail="Aucun brouillon trouvé.")
+    
+    try:
+        return json.loads(current_user.draft_workout_data)
+    except:
+        raise HTTPException(status_code=500, detail="Erreur lecture brouillon.")
+
+@router.delete("/workout/draft")
+async def discard_draft_workout(
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    [DEV-CARD #05-B] Supprime explicitement le brouillon (Abandon).
+    """
+    try:
+        current_user.draft_workout_data = None
+        db.commit()
+        return {"status": "success", "message": "Brouillon supprimé."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/workout", response_model=AIWorkoutPlan)
+async def generate_workout(
+    payload: GenerateWorkoutRequest,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Génère une séance détaillée ET la sauvegarde en brouillon.
+    """
+    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
+        
+        prompt = get_workout_generation_prompt(payload.profile_data, payload.context)
+        response = model.generate_content(prompt)
+        
+        # Nettoyage et Parsing
+        clean_text = clean_ai_json(response.text)
+        parsed_response = json.loads(clean_text)
+        
+        if isinstance(parsed_response, list):
+            if parsed_response:
+                parsed_response = parsed_response[0]
+            else:
+                raise ValueError("L'IA a renvoyé une liste vide.")
+        
+        # [DEV-CARD #05] Sauvegarde automatique du brouillon
+        current_user.draft_workout_data = json.dumps(parsed_response)
+        db.commit()
+        db.refresh(current_user)
+
+        return parsed_response
+    except Exception as e:
+        print(f"❌ Erreur Workout Gen: {e}")
+        raise HTTPException(status_code=500, detail=str(e))-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/routers/feed.py
+================================================================================
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List
+from app.core.database import get_db
+from app.models import sql_models, schemas
+from app.dependencies import get_current_user
+
+router = APIRouter(
+    prefix="/feed",
+    tags=["Neural Feed"]
+)
+
+@router.get("/", response_model=List[schemas.FeedItemResponse])
+async def get_my_feed(
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Récupère le flux d'événements de l'utilisateur.
+    Filtre : Uniquement les items NON COMPLÉTÉS.
+    Tri : Priorité (DESC) puis Date de création (DESC).
+    """
+    items = db.query(sql_models.FeedItem)\
+        .filter(sql_models.FeedItem.user_id == current_user.id)\
+        .filter(sql_models.FeedItem.is_completed == False)\
+        .order_by(sql_models.FeedItem.priority.desc(), sql_models.FeedItem.created_at.desc())\
+        .all()
+    return items
+
+@router.patch("/{item_id}/read")
+async def mark_as_read(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """Marque un item comme LU (mais le laisse dans le flux tant que pas complété)."""
+    item = db.query(sql_models.FeedItem).filter(sql_models.FeedItem.id == item_id, sql_models.FeedItem.user_id == current_user.id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item introuvable")
+    
+    item.is_read = True
+    db.commit()
+    return {"status": "success"}
+
+@router.patch("/{item_id}/complete")
+async def mark_as_completed(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """Marque un item comme COMPLÉTÉ (Disparaît du flux)."""
+    item = db.query(sql_models.FeedItem).filter(sql_models.FeedItem.id == item_id, sql_models.FeedItem.user_id == current_user.id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item introuvable")
+    
+    item.is_completed = True
+    db.commit()
+    return {"status": "success"}-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/routers/performance.py
+================================================================================
+from fastapi import APIRouter, HTTPException
+from app.models.schemas import OneRepMaxRequest, OneRepMaxResponse
+from app.domain import calculations
+
+router = APIRouter(
+    prefix="/performance",
+    tags=["Performance & Metrics"]
+)
+
+@router.post("/1rm", response_model=OneRepMaxResponse)
+async def compute_one_rep_max(payload: OneRepMaxRequest):
+    """
+    Calcule le 1RM (One Rep Max) estimé basé sur une performance.
+    Sélectionne automatiquement la meilleure formule (Epley, Brzycki, Wathan).
+    """
+    try:
+        result = calculations.calculate_1rm(payload.weight, payload.reps)
+        
+        return {
+            "estimated_1rm": result["1rm"],
+            "method_used": result["method"],
+            "input_weight": payload.weight,
+            "input_reps": payload.reps
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/routers/safety.py
+================================================================================
+from fastapi import APIRouter, HTTPException
+from app.models.schemas import ACWRRequest, ACWRResponse
+from app.domain import safety
+
+router = APIRouter(
+    prefix="/safety",
+    tags=["Safety & Prevention"]
+)
+
+@router.post("/acwr", response_model=ACWRResponse)
+async def compute_acwr_metrics(payload: ACWRRequest):
+    """
+    Calcule le Ratio Aigu/Chronique (ACWR) pour prévenir les blessures.
+    Envoie l'historique des séances (Date, Durée, RPE).
+    Retourne le statut de risque (Optimal, Surcharge, Danger).
+    """
+    try:
+        # Conversion des modèles Pydantic en liste de dicts pour Pandas
+        history_dicts = [log.dict() for log in payload.history]
+        
+        result = safety.calculate_acwr(history_dicts)
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/routers/user.py
+================================================================================
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.core.database import get_db
+from app.models import sql_models, schemas
+from app.dependencies import get_current_user
+import json
+
+router = APIRouter(
+    prefix="/user",
+    tags=["User Profile"]
+)
+
+@router.get("/profile", response_model=schemas.UserProfileUpdate)
+async def get_profile(
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Récupère le profil complet de l'utilisateur (JSON).
+    """
+    if not current_user.profile_data:
+        return {"profile_data": {}}
+    
+    try:
+        # On convertit la string stockée en BDD en dictionnaire
+        data = json.loads(current_user.profile_data)
+        return {"profile_data": data}
+    except:
+        return {"profile_data": {}}
+
+@router.put("/profile")
+async def update_profile(
+    profile: schemas.UserProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Sauvegarde le profil complet (Age, Benchmarks, Planning...).
+    """
+    try:
+        # On convertit le dictionnaire reçu en string pour le stockage SQL
+        json_str = json.dumps(profile.profile_data)
+        current_user.profile_data = json_str
+        
+        db.commit()
+        db.refresh(current_user)
+        return {"message": "Profil mis à jour avec succès"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur sauvegarde: {str(e)}")-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/routers/workouts.py
+================================================================================
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from sqlalchemy.orm import Session
+from typing import List
+from app.core.database import get_db
+from app.models import sql_models, schemas
+from app.dependencies import get_current_user
+import json
+
+# [DEV-CARD #03] Imports du Moteur de Feed
+from app.services.feed.engine import TriggerEngine
+from app.services.feed.triggers.workout_analysis import WorkoutAnalysisTrigger
+
+router = APIRouter(
+    prefix="/workouts",
+    tags=["Workouts"]
+)
+
+@router.post("/", response_model=schemas.WorkoutSessionResponse)
+async def create_workout(
+    workout: schemas.WorkoutSessionCreate, 
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Enregistre une séance complète avec gestion du Polymorphisme (Metric Type).
+    Vérifie la cohérence des données (ex: Watts max, RPE bounds).
+    [DEV-CARD #05] Supprime le brouillon associé une fois la séance validée.
+    [DEV-CARD #03] Active le Neural Feed pour l'analyse post-séance.
+    """
+    # 1. Validation de haut niveau avant insertion
+    for s in workout.sets:
+        # Validation RPE
+        if s.rpe is not None and (s.rpe < 0 or s.rpe > 10):
+            # On cap plutôt que de crasher
+            s.rpe = max(0, min(10, s.rpe))
+            
+        # Validation Physiologique selon le mode
+        if s.metric_type == 'POWER_TIME':
+            # Check Watts (weight)
+            if s.weight > 2000:
+                raise HTTPException(status_code=400, detail=f"Valeur impossible : {s.weight} Watts sur l'exercice {s.exercise_name}. Vérifiez la saisie.")
+        
+        elif s.metric_type == 'PACE_DISTANCE':
+            # Dans ce mode : weight = Vitesse/Pace (souvent 0 si calculée) ou Distance, reps = Distance ou Temps
+            # Standard TitanFlow : Reps = Distance (m), Weight = 0 (ou vitesse m/s)
+            if s.reps > 100000: # 100km max par série pour être sûr
+                 raise HTTPException(status_code=400, detail=f"Distance suspecte : {s.reps} mètres.")
+
+    # 2. Création de la Session
+    db_workout = sql_models.WorkoutSession(
+        date=workout.date,
+        duration=workout.duration,
+        rpe=workout.rpe,
+        energy_level=workout.energy_level,
+        notes=workout.notes,
+        user_id=current_user.id
+    )
+    db.add(db_workout)
+    db.commit()
+    db.refresh(db_workout)
+    
+    # 3. Ajout des Séries (Sets)
+    if workout.sets:
+        for s in workout.sets:
+            # Conversion explicite Pydantic -> SQL Model
+            db_set = sql_models.WorkoutSet(
+                session_id=db_workout.id,
+                exercise_name=s.exercise_name,
+                set_order=s.set_order,
+                weight=s.weight, # Déjà nettoyé par Pydantic (float)
+                reps=s.reps,     # Déjà nettoyé par Pydantic (float, secondes inclues)
+                rpe=s.rpe,
+                rest_seconds=s.rest_seconds,
+                metric_type=s.metric_type # Le fameux recording_mode
+            )
+            db.add(db_set)
+        
+        # [DEV-CARD #05] Nettoyage du brouillon après succès
+        current_user.draft_workout_data = None
+        
+        db.commit()
+        db.refresh(db_workout)
+
+    # 4. [DEV-CARD #03] TRIGGER NEURAL FEED (L'IA s'active ici)
+    # On lance l'analyse immédiatement (await) pour que le feed soit à jour 
+    # quand l'utilisateur revient sur l'accueil.
+    try:
+        # [MODIF V2] On passe le profil complet dans le contexte via user_data
+        # On tente de parser le JSON profile_data s'il existe
+        profile_data = {}
+        if current_user.profile_data:
+            try:
+                profile_data = json.loads(current_user.profile_data)
+            except:
+                pass
+
+        engine = TriggerEngine()
+        engine.register(WorkoutAnalysisTrigger())
+        await engine.run_all(db, current_user.id, {
+            "workout": db_workout,
+            "profile": profile_data # <--- ICI, on injecte les données pour le Bio-Twin
+        })
+    except Exception as e:
+        # On ne bloque pas la réponse si l'IA échoue, c'est du bonus
+        print(f"⚠️ Feed Engine Error: {e}")
+    
+    return db_workout
+
+@router.get("/", response_model=List[schemas.WorkoutSessionResponse])
+async def read_workouts(
+    skip: int = 0, 
+    limit: int = 100, 
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Récupère l'historique complet.
+    Les champs polymorphes (weight/reps) sont renvoyés tels quels,
+    le Frontend utilisera 'metric_type' pour savoir si c'est des kg ou des watts.
+    """
+    workouts = db.query(sql_models.WorkoutSession)\
+        .filter(sql_models.WorkoutSession.user_id == current_user.id)\
+        .order_by(sql_models.WorkoutSession.date.desc())\
+        .offset(skip)\
+        .limit(limit)\
+        .all()
+    return workouts-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/services/feed/engine.py
+================================================================================
+import logging
+import uuid
+import json
+from datetime import datetime, timedelta
+from typing import List, Dict, Any
+from sqlalchemy.orm import Session
+from sqlalchemy import and_
+
+from app.models import sql_models, schemas
+from app.services.feed.triggers.base import BaseTrigger
+
+# Configuration des logs pour ne pas perdre une miette du match
+logger = logging.getLogger(__name__)
+
+class TriggerEngine:
+    """
+    Le Moteur de Jeu.
+    Il possède un registre de Triggers et les exécute tous pour un contexte donné.
+    Il gère aussi la sécurité (Anti-Crash) et la filtration (Déduplication).
+    """
+    def __init__(self):
+        self._registry: List[BaseTrigger] = []
+
+    def register(self, trigger: BaseTrigger):
+        """Enrôle un nouveau Trigger dans l'équipe."""
+        self._registry.append(trigger)
+        logger.info(f"✅ Trigger enregistré : {trigger.__class__.__name__}")
+
+    async def run_all(self, db: Session, user_id: int, context: Dict[str, Any]) -> List[sql_models.FeedItem]:
+        """
+        Lance tous les Triggers enregistrés.
+        
+        Règles du jeu :
+        1. Isolation : Si un trigger plante, les autres continuent.
+        2. Déduplication : On évite de spammer le même message (ex: 1x par 24h).
+        3. Persistance : Sauvegarde immédiate en base.
+        """
+        generated_events = []
+
+        for trigger in self._registry:
+            try:
+                # Le Trigger analyse le jeu...
+                event_schema = await trigger.check(user_id, context)
+                
+                if event_schema:
+                    # Arbitrage vidéo (Déduplication)
+                    if not self._should_discard(db, user_id, event_schema):
+                        
+                        # Transformation Schema -> SQL Model
+                        db_item = sql_models.FeedItem(
+                            id=str(uuid.uuid4()),
+                            user_id=user_id,
+                            type=event_schema.type,
+                            title=event_schema.title,
+                            message=event_schema.message,
+                            priority=event_schema.priority,
+                            is_read=False,
+                            is_completed=False,
+                            # Gestion propre du JSON payload
+                            action_payload=json.dumps(event_schema.action_payload) if event_schema.action_payload else None
+                        )
+                        
+                        db.add(db_item)
+                        generated_events.append(db_item)
+                        logger.info(f"📢 Event généré : {db_item.title} ({trigger.__class__.__name__})")
+                    else:
+                        logger.info(f"🔇 Event ignoré (Doublon) : {event_schema.title}")
+
+            except Exception as e:
+                # Carton jaune : Le trigger a planté, mais le match continue
+                logger.error(f"⚠️ Erreur Trigger {trigger.__class__.__name__}: {str(e)}")
+                continue
+
+        # Coup de sifflet final : on valide les buts
+        if generated_events:
+            db.commit()
+            for ev in generated_events:
+                db.refresh(ev)
+                
+        return generated_events
+
+    def _should_discard(self, db: Session, user_id: int, event: schemas.FeedItemCreate) -> bool:
+        """
+        Vérifie si un événement similaire existe déjà récemment.
+        Règle actuelle : Pas de doublon (Même Titre + Même Type) non traité.
+        Ou pas de doublon identique créé dans les dernières 24h.
+        """
+        # 1. Chercher si le même event est déjà en attente (Non complété)
+        existing_active = db.query(sql_models.FeedItem).filter(
+            sql_models.FeedItem.user_id == user_id,
+            sql_models.FeedItem.type == event.type,
+            sql_models.FeedItem.title == event.title,
+            sql_models.FeedItem.is_completed == False
+        ).first()
+
+        if existing_active:
+            return True # On jette, l'utilisateur a déjà ça dans son feed
+
+        # 2. Chercher si le même event a été créé il y a moins de 24h (Anti-Spam)
+        one_day_ago = datetime.utcnow() - timedelta(hours=24)
+        recent_duplicate = db.query(sql_models.FeedItem).filter(
+            sql_models.FeedItem.user_id == user_id,
+            sql_models.FeedItem.type == event.type,
+            sql_models.FeedItem.title == event.title,
+            sql_models.FeedItem.created_at >= one_day_ago
+        ).first()
+
+        if recent_duplicate:
+            return True
+
+        return False-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/services/feed/triggers/base.py
+================================================================================
+from abc import ABC, abstractmethod
+from typing import Optional, Dict, Any
+from app.models import schemas
+
+class BaseTrigger(ABC):
+    """
+    Interface abstraite pour tous les déclencheurs d'événements (Triggers).
+    Chaque Trigger est un 'spécialiste' (ex: Spécialiste Analyse, Spécialiste Santé).
+    """
+
+    @abstractmethod
+    async def check(self, user_id: int, context: Dict[str, Any]) -> Optional[schemas.FeedItemCreate]:
+        """
+        Analyse le contexte et retourne un FeedItemCreate si la condition est remplie.
+        Retourne None sinon.
+        
+        :param user_id: L'ID de l'athlète concerné.
+        :param context: Un dictionnaire riche contenant les données (ex: {'workout': ..., 'profile': ...})
+        :return: Un objet FeedItemCreate prêt à être inséré, ou None.
+        """
+        pass-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/services/feed/triggers/workout_analysis.py
+================================================================================
+import os
+import json
+import re
+import google.generativeai as genai
+from typing import Dict, Any, Optional
+from app.services.feed.triggers.base import BaseTrigger
+from app.models import schemas, sql_models
+from app.domain.bioenergetics import BioenergeticService
+
+class WorkoutAnalysisTrigger(BaseTrigger):
+    """
+    Trigger : Analyse Post-Séance Avancée (Bio-Twin + Gemini).
+    Condition : Une séance vient d'être terminée.
+    Action : 
+        1. Calcule les métriques bioénergétiques (Kcal, Macros).
+        2. Génère un rapport JSON complet via IA.
+        3. Sauvegarde le rapport dans la séance (Persistance).
+        4. Crée une carte Feed pour notifier l'athlète.
+    """
+    
+    def __init__(self):
+        self.api_key = os.getenv("GEMINI_API_KEY")
+
+    async def check(self, user_id: int, context: Dict[str, Any]) -> Optional[schemas.FeedItemCreate]:
+        # 1. Vérifie si le contexte contient les données requises
+        workout: sql_models.WorkoutSession = context.get("workout")
+        profile_data: Dict[str, Any] = context.get("profile", {})
+        
+        if not workout:
+            return None
+
+        # 2. Si pas de clé API, on sort silencieusement
+        if not self.api_key:
+            return None
+
+        try:
+            # 3. PHASE 1 : CALCULS BIOÉNERGÉTIQUES (Les Maths)
+            bio_metrics = BioenergeticService.calculate_needs(
+                profile_data, 
+                workout.sets, 
+                workout.duration, 
+                workout.rpe
+            )
+            
+            # 4. PHASE 2 : GÉNÉRATION IA (Le Cerveau)
+            sets_summary = "\n".join([
+                f"- {s.exercise_name}: {s.weight} (load/watts) x {s.reps} (reps/sec/m) [{s.metric_type}]"
+                for s in workout.sets
+            ])
+            
+            prompt = f"""
+            RÔLE : Expert en Physiologie Sportive et Nutrition (TitanFlow).
+            TACHE : Analyser la séance et générer un rapport JSON strict.
+
+            === DONNÉES ATHLÈTE ===
+            - Profil : {json.dumps(profile_data, ensure_ascii=False)}
+            
+            === DONNÉES SÉANCE ===
+            - Durée : {workout.duration} min
+            - RPE : {workout.rpe}/10 (Intensité Ressentie)
+            - Contenu :
+            {sets_summary}
+            
+            === DONNÉES BIO-TWIN (CALCULÉES) ===
+            - Dépense : ~{bio_metrics['kcal_total']} kcal
+            - Besoins Post-Effort (Estimés) : 
+              * Protéines : {bio_metrics['protein_g']}g
+              * Glucides : {bio_metrics['carbs_g']}g
+              * Eau : {bio_metrics['water_ml']}ml
+            
+            === STRUCTURE DE SORTIE (JSON UNIQUEMENT) ===
+            {{
+              "performance_analysis": "Analyse technique de la charge et du volume en 2 phrases max.",
+              "nutrition_comment": "Conseil précis validant ou ajustant les macros calculées ci-dessus.",
+              "recovery_score": 8,
+              "coach_questions": ["Question pertinente 1?", "Question pertinente 2?"],
+              "food_suggestion": {{
+                  "option_shake": "Ex: Whey + Banane",
+                  "option_solid": "Ex: Poulet + Riz + Légumes"
+              }},
+              "feed_message": "Une phrase d'accroche très courte (max 12 mots) pour la notification."
+            }}
+            """
+
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
+            response = model.generate_content(prompt)
+            
+            # Nettoyage JSON
+            json_str = self._clean_json(response.text)
+            analysis_result = json.loads(json_str)
+
+            # 5. PHASE 3 : PERSISTANCE (Sauvegarde en BDD)
+            # On fusionne les métriques calculées avec l'analyse IA
+            full_report = {
+                **analysis_result,
+                "bio_metrics": bio_metrics
+            }
+            
+            # On stocke le JSON stringifié dans la colonne ai_analysis de la séance
+            # Note: L'objet 'workout' est attaché à la session DB, donc le commit du TriggerEngine validera cette modif.
+            workout.ai_analysis = json.dumps(full_report)
+
+            # 6. PHASE 4 : NOTIFICATION (Le Feed)
+            # On utilise le message court généré par l'IA pour le feed
+            feed_msg = analysis_result.get("feed_message", "Analyse de séance disponible.")
+
+            return schemas.FeedItemCreate(
+                type=schemas.FeedItemType.ANALYSIS,
+                title="Rapport de Séance",
+                message=feed_msg,
+                priority=5,
+                action_payload={
+                    "route": "/history", 
+                    # On pourra passer des args pour ouvrir directement le détail plus tard
+                    "args": {"workout_id": workout.id}
+                }
+            )
+
+        except Exception as e:
+            print(f"⚠️ Erreur IA Analysis: {e}")
+            # Fallback : Si l'IA plante, on ne crée pas de FeedItem, 
+            # ou on pourrait en créer un générique. Ici on choisit la discrétion.
+            return None
+
+    def _clean_json(self, text: str) -> str:
+        """Extrait le JSON si l'IA ajoute du markdown."""
+        try:
+            pattern = r"```(?:json)?\s*([\s\S]*?)\s*```"
+            match = re.search(pattern, text)
+            if match:
+                return match.group(1).strip()
+            return text.strip()
+        except:
+            return text-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/fix_table.py
+================================================================================
+from sqlalchemy import text
+from app.core.database import engine
+
+print("☢️  Démarrage de l'option nucléaire...")
+
+with engine.connect() as connection:
+    trans = connection.begin()
+    try:
+        # On supprime d'abord les séances (qui dépendent des users)
+        connection.execute(text("DROP TABLE IF EXISTS workout_sessions CASCADE;"))
+        print("💥 Table workout_sessions pulvérisée.")
+        
+        # On supprime ensuite les users (pour recréer la table avec l'email)
+        connection.execute(text("DROP TABLE IF EXISTS users CASCADE;"))
+        print("💥 Table users pulvérisée.")
+        
+        trans.commit()
+    except Exception as e:
+        trans.rollback()
+        print(f"❌ Erreur : {e}")
+
+print("✅ Terminé. Redémarre le serveur pour recréer les tables propres.")-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/frontend/app.py
+================================================================================
+import streamlit as st
+import requests
+import pandas as pd
+import os  # <--- Ajout de l'import os
+
+# Configuration de la page
+st.set_page_config(page_title="TitanFlow Pro", page_icon="⚡", layout="wide")
+
+# L'URL de ton API (Backend)
+# En PROD (Render) : Il utilisera la variable d'environnement BACKEND_URL
+# En LOCAL (Ton PC) : Il utilisera http://127.0.0.1:8000 par défaut
+API_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+
+# --- GESTION DE LA SESSION (Token) ---
+if "token" not in st.session_state:
+    st.session_state.token = None
+
+def login():
+    st.sidebar.header("🔐 Connexion")
+    username = st.sidebar.text_input("Pseudo")
+    password = st.sidebar.text_input("Mot de passe", type="password")
+    
+    if st.sidebar.button("Se connecter"):
+        try:
+            # Appel à l'API pour récupérer le token
+            response = requests.post(
+                f"{API_URL}/auth/token",
+                data={"username": username, "password": password}
+            )
+            if response.status_code == 200:
+                st.session_state.token = response.json()["access_token"]
+                st.sidebar.success("Connecté !")
+                st.rerun()
+            else:
+                st.sidebar.error("Erreur de connexion")
+        except Exception as e:
+            st.sidebar.error(f"API introuvable : {e}")
+
+def logout():
+    if st.sidebar.button("Se déconnecter"):
+        st.session_state.token = None
+        st.rerun()
+
+# --- INTERFACE PRINCIPALE ---
+st.title("⚡ TitanFlow : Monitoring Athlétique")
+
+# Vérification de l'état de l'API
+try:
+    health = requests.get(f"{API_URL}/health").json()
+    st.success(f"Backend connecté v{health['version']}")
+except:
+    st.error("🚨 Le Backend semble éteint. Vérifie que l'URL est correcte.")
+
+# Gestion Login/Logout
+if not st.session_state.token:
+    st.info("Veuillez vous connecter dans la barre latérale pour accéder aux données.")
+    login()
+else:
+    logout()
+    st.write("---")
+    
+    # Onglets de l'application
+    tab1, tab2 = st.tabs(["🏋️‍♂️ Historique", "➕ Nouvelle Séance"])
+    
+    # --- ONGLET 1 : HISTORIQUE ---
+    with tab1:
+        st.subheader("Vos séances enregistrées")
+        headers = {"Authorization": f"Bearer {st.session_state.token}"}
+        
+        try:
+            res = requests.get(f"{API_URL}/workouts/", headers=headers)
+            if res.status_code == 200:
+                workouts = res.json()
+                if workouts:
+                    df = pd.DataFrame(workouts)
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.info("Aucune séance trouvée.")
+            else:
+                st.error("Erreur chargement données")
+        except Exception as e:
+            st.error(f"Erreur : {e}")
+
+    # --- ONGLET 2 : AJOUTER SÉANCE ---
+    with tab2:
+        st.subheader("Enregistrer un entraînement")
+        with st.form("new_workout"):
+            col1, col2 = st.columns(2)
+            date = col1.date_input("Date")
+            duration = col2.number_input("Durée (min)", min_value=0, value=60)
+            rpe = st.slider("Intensité (RPE)", 0, 10, 5)
+            
+            submitted = st.form_submit_button("Sauvegarder")
+            
+            if submitted:
+                payload = {
+                    "date": str(date),
+                    "duration": duration,
+                    "rpe": rpe
+                }
+                res = requests.post(f"{API_URL}/workouts/", json=payload, headers=headers)
+                
+                if res.status_code == 200:
+                    st.success("Séance enregistrée ! 🎉")
+                    st.rerun()
+                else:
+                    st.error(f"Erreur : {res.text}")-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/init_db.py
+================================================================================
+from app.core.database import engine, Base
+from app.models import sql_models
+
+print("🏗️  Force-Création des tables en cours...")
+try:
+    Base.metadata.create_all(bind=engine)
+    print("✅  Succès ! Toutes les tables (users + workout_sessions) sont prêtes.")
+except Exception as e:
+    print(f"❌  Erreur : {e}")-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/migrate_db.py
+================================================================================
+import os
+import sqlalchemy
+from sqlalchemy import text
+from dotenv import load_dotenv
+
+# Charge les variables locales si test local, sinon prend celles de Render
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Correction pour Render qui utilise parfois postgres:// au lieu de postgresql://
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+if not DATABASE_URL:
+    print("❌ Erreur : Pas de DATABASE_URL trouvée.")
+    exit(1)
+
+print(f"🔌 Connexion à la BDD...")
+engine = sqlalchemy.create_engine(DATABASE_URL)
+
+with engine.connect() as connection:
+    # 1. On active le mode Transaction
+    trans = connection.begin()
+    try:
+        print("🛠️ Vérification des colonnes manquantes...")
+        
+        # --- MIGRATION WORKOUTS ---
+        connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"))
+        connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"))
+        connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"))
+        # [DEV-CARD #06] Ajout colonne analyse IA
+        connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS ai_analysis TEXT;"))
+        
+        print("✅ Table 'workout_sessions' vérifiée.")
+
+        # --- MIGRATION SETS ---
+        connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
+        connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"))
+        print("✅ Table 'workout_sets' vérifiée.")
+        
+        # --- MIGRATION USERS ---
+        # Ajout de profile_data pour la sauvegarde du profil
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
+        
+        # Ajout des colonnes IA (Stratégie & Planning)
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"))
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
+        
+        # [FIX] Ajout de la colonne Brouillon (Draft) qui causait le crash
+        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"))
+        
+        print("✅ Table 'users' vérifiée (profile, strategy, weekly, draft).")
+        
+        # --- [DEV-CARD #01] MIGRATION FEED ---
+        # On crée la table feed_items si elle n'existe pas
+        # Note : On utilise UUID en String pour l'ID
+        create_feed_table_sql = """
+        CREATE TABLE IF NOT EXISTS feed_items (
+            id VARCHAR PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id),
+            type VARCHAR,
+            title VARCHAR,
+            message VARCHAR,
+            action_payload TEXT,
+            is_read BOOLEAN DEFAULT FALSE,
+            is_completed BOOLEAN DEFAULT FALSE,
+            priority INTEGER DEFAULT 1,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """
+        connection.execute(text(create_feed_table_sql))
+        print("✅ Table 'feed_items' vérifiée/créée.")
+
+        trans.commit()
+        print("🎉 Migration terminée avec succès ! Tes tables sont à jour Coach.")
+        
+    except Exception as e:
+        trans.rollback()
+        print(f"❌ Erreur lors de la migration : {e}")-e 
+
+-e 
+================================================================================
+📄 FICHIER : frontend/app.py
+================================================================================
+import streamlit as st
+import requests
+import pandas as pd
+from datetime import datetime
+
+# Configuration de la page
+st.set_page_config(page_title="TitanFlow Pro", page_icon="⚡", layout="wide")
+
+# L'URL de ton API (Backend)
+API_URL = "http://127.0.0.1:8000"
+
+# --- GESTION DE LA SESSION (Token) ---
+if "token" not in st.session_state:
+    st.session_state.token = None
+
+def login():
+    st.sidebar.header("🔐 Connexion")
+    username = st.sidebar.text_input("Pseudo")
+    password = st.sidebar.text_input("Mot de passe", type="password")
+    
+    if st.sidebar.button("Se connecter"):
+        try:
+            # Appel à l'API pour récupérer le token
+            response = requests.post(
+                f"{API_URL}/auth/token",
+                data={"username": username, "password": password}
+            )
+            if response.status_code == 200:
+                st.session_state.token = response.json()["access_token"]
+                st.sidebar.success("Connecté !")
+                st.rerun()
+            else:
+                st.sidebar.error("Erreur de connexion")
+        except Exception as e:
+            st.sidebar.error(f"API introuvable : {e}")
+
+def logout():
+    if st.sidebar.button("Se déconnecter"):
+        st.session_state.token = None
+        st.rerun()
+
+# --- INTERFACE PRINCIPALE ---
+st.title("⚡ TitanFlow : Monitoring Athlétique")
+
+# Vérification de l'état de l'API
+try:
+    health = requests.get(f"{API_URL}/health").json()
+    st.success(f"Backend connecté v{health['version']}")
+except:
+    st.error("🚨 Le Backend semble éteint. Vérifie que le Terminal 1 tourne bien !")
+
+# Gestion Login/Logout
+if not st.session_state.token:
+    st.info("Veuillez vous connecter dans la barre latérale pour accéder aux données.")
+    login()
+else:
+    logout()
+    st.write("---")
+    
+    # Onglets de l'application
+    tab1, tab2 = st.tabs(["🏋️‍♂️ Historique", "➕ Nouvelle Séance"])
+    
+    # --- ONGLET 1 : HISTORIQUE ---
+    with tab1:
+        st.subheader("Vos séances enregistrées")
+        headers = {"Authorization": f"Bearer {st.session_state.token}"}
+        
+        try:
+            res = requests.get(f"{API_URL}/workouts/", headers=headers)
+            if res.status_code == 200:
+                workouts = res.json()
+                if workouts:
+                    df = pd.DataFrame(workouts)
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.info("Aucune séance trouvée.")
+            else:
+                st.error("Erreur chargement données")
+        except Exception as e:
+            st.error(f"Erreur : {e}")
+
+    # --- ONGLET 2 : AJOUTER SÉANCE ---
+    with tab2:
+        st.subheader("Enregistrer un entraînement")
+        with st.form("new_workout"):
+            col1, col2 = st.columns(2)
+            date = col1.date_input("Date")
+            duration = col2.number_input("Durée (min)", min_value=0, value=60)
+            rpe = st.slider("Intensité (RPE)", 0, 10, 5)
+            
+            submitted = st.form_submit_button("Sauvegarder")
+            
+            if submitted:
+                # Préparation du JSON
+                payload = {
+                    "date": str(date),
+                    "duration": duration,
+                    "rpe": rpe
+                }
+                # Envoi à l'API
+                headers = {"Authorization": f"Bearer {st.session_state.token}"}
+                res = requests.post(f"{API_URL}/workouts/", json=payload, headers=headers)
+                
+                if res.status_code == 200:
+                    st.success("Séance enregistrée ! 🎉")
+                    # Petit hack pour rafraîchir l'historique
+                    st.rerun()
+                else:
+                    st.error(f"Erreur : {res.text}")
+-e 
+
