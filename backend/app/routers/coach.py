@@ -1,4 +1,5 @@
-from app.core.cache import cached_response, ai_cache
+from app.core.cache_fixed import cached_response_fixed
+from app.core.cache_fixed import cached_response_fixed as cached_response, ai_cache_fixed as ai_cache
 import os
 import json
 import re
@@ -355,6 +356,7 @@ async def discard_draft_workout(
 
 @router.post("/workout", response_model=AIWorkoutPlan)
 @cached_response(ttl_hours=6)  # Cache de 6h pour les séances similaires
+@cached_response_fixed(ttl_hours=6, ignore_args=["current_user"])
 async def generate_workout(
     payload: GenerateWorkoutRequest,
     db: Session = Depends(get_db),
