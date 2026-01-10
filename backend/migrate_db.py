@@ -272,6 +272,7 @@ def apply_migration():
             
             if table_exists(connection, "users"):
                 migrations_users = [
+                                        ("email", "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR UNIQUE;"),
                     ("profile_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"),
                     ("strategy_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"),
                     ("weekly_plan_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"),

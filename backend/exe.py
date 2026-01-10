@@ -1,70 +1,26 @@
 import os
 
-# Le code manquant à injecter
-MISSING_CODE = """
-# --- AUTO-INJECTED UPDATE SCHEMAS ---
+file_path = os.path.join("backend", "migrate_db.py")
+if not os.path.exists(file_path):
+    file_path = "migrate_db.py"
 
-class AthleteProfileUpdate(AthleteProfileBase):
-    pass
-
-class ProfileSectionUpdate(BaseModel):
-    section_data: Dict[str, Any]
-
-class DailyMetrics(BaseModel):
-    date: str
-    weight: Optional[float] = None
-    sleep_quality: Optional[int] = None
-    resting_heart_rate: Optional[int] = None
-    hrv: Optional[int] = None
-    energy_level: Optional[int] = None
-    muscle_soreness: Optional[int] = None
-    perceived_stress: Optional[int] = None
-    sleep_duration: Optional[float] = None
-
-class GoalProgressUpdate(BaseModel):
-    progress_value: int
-    progress_note: Optional[str] = None
-    achieved: bool = False
-"""
-
-print("🚀 Recherche de tous les fichiers schemas.py...")
-
-found_count = 0
-fixed_count = 0
-
-# On parcourt tout le projet récursivement
-for root, dirs, files in os.walk("."):
-    for file in files:
-        if file == "schemas.py":
-            file_path = os.path.join(root, file)
-            found_count += 1
-            
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                
-                # Vérifie si le fichier est un fichier de modèles (contient BaseModel)
-                if "class BaseModel" in content or "from pydantic import BaseModel" in content:
-                    
-                    # Vérifie si la classe manque
-                    if "class AthleteProfileUpdate" not in content:
-                        print(f"🔧 Réparation de : {file_path}")
-                        
-                        # On ajoute le code à la fin
-                        with open(file_path, "a", encoding="utf-8") as f:
-                            f.write("\n" + MISSING_CODE)
-                        
-                        fixed_count += 1
-                    else:
-                        print(f"✅ Déjà complet : {file_path}")
-                else:
-                    print(f"ℹ️ Ignoré (pas un fichier Pydantic) : {file_path}")
-                    
-            except Exception as e:
-                print(f"❌ Erreur sur {file_path}: {e}")
-
-print("-" * 30)
-if fixed_count > 0:
-    print(f"🎉 Succès ! {fixed_count} fichier(s) schemas.py ont été mis à jour.")
+if os.path.exists(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    # On cherche le bloc incomplet
+    old_block = '("profile_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"),'
+    
+    # On ajoute la ligne email juste avant si elle n\'y est pas
+    new_line = '                    ("email", "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR UNIQUE;"),\n'
+    
+    if '("email",' not in content and old_block in content:
+        new_content = content.replace(old_block, new_line + "                    " + old_block)
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        print("✅ migrate_db.py a été mis à jour avec la colonne email !")
+    else:
+        print("ℹ️ Le fichier semble déjà à jour ou le motif n'a pas été trouvé.")
 else:
-    print("🤔 Aucun fichier n'avait besoin de modification (ou schemas.py introuvable).")
+    print("❌ Fichier migrate_db.py introuvable.")
