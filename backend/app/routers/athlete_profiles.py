@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.models import sql_models, schemas
-from app.services.coach_memory_service import initialize_coach_memory
+from app.services.coach_memory.service import initialize_coach_memory
 from app.validators.athlete_profile_validators import validate_athlete_profile
 
 router = APIRouter(

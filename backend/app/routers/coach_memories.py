@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.models import sql_models, schemas
-from app.services.coach_memory_service import (
+from app.services.coach_memory.service import (
     initialize_coach_memory,
     process_workout_session,
     update_daily_context,

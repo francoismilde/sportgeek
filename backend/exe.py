@@ -1,61 +1,52 @@
 import os
 
-# Liste des chemins possibles pour main.py
-possible_paths = [
-    os.path.join("backend", "app", "main.py"),
-    os.path.join("app", "main.py"),
-    "main.py"
+# Liste des fichiers qui utilisent ce service et doivent être corrigés
+files_to_fix = [
+    os.path.join("backend", "app", "routers", "athlete_profiles.py"),
+    os.path.join("backend", "app", "routers", "coach_memories.py"),
+    os.path.join("app", "routers", "athlete_profiles.py"),
+    os.path.join("app", "routers", "coach_memories.py")
 ]
 
-target_file = None
-for path in possible_paths:
-    if os.path.exists(path):
-        target_file = path
-        break
+# Le mauvais import (celui qui plante)
+bad_import = "from app.services.coach_memory_service import"
 
-if not target_file:
-    print("❌ Impossible de trouver main.py")
-    exit(1)
+# Le bon import (celui qui correspond à votre structure de fichiers)
+good_import = "from app.services.coach_memory.service import"
 
-print(f"🔧 Réparation finale de : {target_file}")
+print("🔧 Réparation des imports de services...")
 
-with open(target_file, "r", encoding="utf-8") as f:
-    lines = f.readlines()
+fixed_count = 0
 
-new_lines = []
-import_fixed = False
+for file_path in files_to_fix:
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            if bad_import in content:
+                print(f"⚠️  Erreur trouvée dans : {file_path}")
+                
+                # Remplacement
+                new_content = content.replace(bad_import, good_import)
+                
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(new_content)
+                    
+                print(f"✅  Corrigé : {file_path}")
+                fixed_count += 1
+            else:
+                print(f"ℹ️  Fichier sain ou introuvable : {file_path}")
+                
+        except Exception as e:
+            print(f"❌ Erreur lecture {file_path}: {e}")
 
-# On parcourt le fichier ligne par ligne
-for line in lines:
-    # On repère la ligne des imports de routeurs
-    if "from app.routers import" in line:
-        if not import_fixed:
-            # On remplace cette ligne (et potentiellement les suivantes si c'était multiligne)
-            # par une ligne unique et complète qui inclut TOUT.
-            print("📝 Remplacement de la ligne d'import...")
-            new_lines.append("from app.routers import performance, safety, auth, workouts, coach, user, feed, profiles, athlete_profiles, coach_memories\n")
-            import_fixed = True
-        else:
-            # Si on a déjà mis notre ligne fixée, on ignore les autres lignes d'imports de routeurs
-            # (cas où l'ancien script aurait mis des doublons)
-            continue
-    else:
-        new_lines.append(line)
-
-# Sécurité : Si on n'a pas trouvé la ligne, on l'ajoute après les imports système
-if not import_fixed:
-    print("⚠️ Ligne d'import introuvable, insertion forcée en tête.")
-    final_lines = []
-    inserted = False
-    for line in new_lines:
-        final_lines.append(line)
-        if "from sqlalchemy" in line and not inserted:
-             final_lines.append("from app.routers import performance, safety, auth, workouts, coach, user, feed, profiles, athlete_profiles, coach_memories\n")
-             inserted = True
-    new_lines = final_lines
-
-# Écriture du fichier corrigé
-with open(target_file, "w", encoding="utf-8") as f:
-    f.writelines(new_lines)
-
-print("✅ main.py a été réécrit avec les imports complets.")
+if fixed_count > 0:
+    print(f"\n🎉 Terminé ! {fixed_count} fichiers ont été réparés.")
+else:
+    print("\n🤔 Aucune erreur trouvée. Vérifiez que vous êtes à la racine du projet.")
+    # Fallback : Si le fichier service.py est mal placé, on peut créer un alias
+    service_path = os.path.join("backend", "app", "services", "coach_memory", "service.py")
+    if os.path.exists(service_path):
+        print(f"ℹ️  Le service existe bien ici : {service_path}")
+        print("    L'import correct est : from app.services.coach_memory.service import ...")
