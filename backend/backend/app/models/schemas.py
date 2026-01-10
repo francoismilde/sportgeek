@@ -62,10 +62,11 @@ class AthleteProfileResponse(AthleteProfileBase):
     class Config:
         from_attributes = True
 
-# --- MEMORY SCHEMAS ---
+# --- MEMORY SCHEMAS (FIXED) ---
 
 class CoachMemoryResponse(BaseModel):
     id: int
+    # [FIX] Removed invalid .get() call here
     readiness_score: int = Field(alias="current_context", default=50)
     current_phase: str = "Général"
     flags: Dict[str, bool] = {}
@@ -73,7 +74,8 @@ class CoachMemoryResponse(BaseModel):
     
     @field_validator('readiness_score', mode='before')
     def extract_readiness(cls, v):
-        if isinstance(v, dict): return v.get('readiness_score', 50)
+        if isinstance(v, dict):
+            return v.get('readiness_score', 50)
         return v
 
     class Config:

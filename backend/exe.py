@@ -1,98 +1,276 @@
 import os
 import sys
 
-# Récupère le dossier où se trouve ce script
+# --- 1. CORRECT CONTENT FOR SCHEMAS.PY ---
+# This version fixes the AttributeError by removing .get() from the Field definition
+CORRECT_SCHEMAS_CONTENT = """from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional, Dict, Any, Union
+from datetime import date, datetime
+from enum import Enum
+import json
+
+# --- ENUMS & TYPES ---
+
+class SportType(str, Enum):
+    RUGBY = "Rugby"
+    FOOTBALL = "Football"
+    CROSSFIT = "CrossFit"
+    HYBRID = "Hybrid"
+    RUNNING = "Running"
+    OTHER = "Autre"
+
+# --- SUB-SCHEMAS FOR PROFILE ---
+
+class BasicInfo(BaseModel):
+    pseudo: Optional[str] = None
+    email: Optional[str] = None
+    birth_date: Optional[str] = None
+    training_age: Optional[int] = 0
+
+class PhysicalMetrics(BaseModel):
+    height: float = 0
+    weight: float = 0
+    body_fat: Optional[float] = None
+    resting_hr: Optional[int] = None
+    sleep_quality_avg: Optional[int] = 5
+
+class SportContext(BaseModel):
+    sport: SportType = SportType.OTHER
+    position: Optional[str] = None
+    level: str = "Intermédiaire"
+    equipment: List[str] = ["Standard"]
+
+class TrainingPreferences(BaseModel):
+    days_available: List[str] = []
+    duration_min: int = 60
+    preferred_split: str = "Upper/Lower"
+
+# --- MAIN PROFILE SCHEMAS ---
+
+class AthleteProfileBase(BaseModel):
+    basic_info: BasicInfo = Field(default_factory=BasicInfo)
+    physical_metrics: PhysicalMetrics = Field(default_factory=PhysicalMetrics)
+    sport_context: SportContext = Field(default_factory=SportContext)
+    training_preferences: TrainingPreferences = Field(default_factory=TrainingPreferences)
+    goals: Dict[str, Any] = {}
+    constraints: Dict[str, Any] = {}
+    injury_prevention: Dict[str, Any] = {}
+    performance_baseline: Dict[str, Any] = {}
+
+class AthleteProfileCreate(AthleteProfileBase):
+    pass
+
+class AthleteProfileResponse(AthleteProfileBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+# --- MEMORY SCHEMAS (FIXED) ---
+
+class CoachMemoryResponse(BaseModel):
+    id: int
+    # [FIX] Removed invalid .get() call here
+    readiness_score: int = Field(alias="current_context", default=50)
+    current_phase: str = "Général"
+    flags: Dict[str, bool] = {}
+    insights: Dict[str, Any] = {}
+    
+    @field_validator('readiness_score', mode='before')
+    def extract_readiness(cls, v):
+        if isinstance(v, dict):
+            return v.get('readiness_score', 50)
+        return v
+
+    class Config:
+        from_attributes = True
+
+# --- LEGACY SCHEMAS (KEPT FOR COMPATIBILITY) ---
+
+class WorkoutSetBase(BaseModel):
+    exercise_name: str
+    set_order: int
+    weight: Union[float, str] = 0.0
+    reps: Union[float, str] = 0.0
+    rpe: Optional[float] = 0.0
+    rest_seconds: int = 0
+    metric_type: str = "LOAD_REPS"
+
+    @field_validator('weight', 'reps', mode='before')
+    def parse_polymorphic_fields(cls, v):
+        if isinstance(v, str):
+            v = v.strip().replace(',', '.')
+            if ':' in v:
+                parts = v.split(':')
+                try:
+                    seconds = 0.0
+                    if len(parts) == 2:
+                        seconds = float(parts[0]) * 60 + float(parts[1])
+                    elif len(parts) == 3:
+                        seconds = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                    return seconds
+                except ValueError:
+                    return 0.0
+            try:
+                return float(v)
+            except ValueError:
+                return 0.0
+        return v
+
+class WorkoutSetCreate(WorkoutSetBase):
+    pass
+
+class WorkoutSessionCreate(BaseModel):
+    date: date
+    duration: float
+    rpe: float
+    energy_level: int = 5
+    notes: Optional[str] = None
+    sets: List[WorkoutSetCreate] = []
+
+class WorkoutSetResponse(WorkoutSetBase):
+    id: int
+    weight: float
+    reps: float
+    class Config:
+        from_attributes = True
+
+class WorkoutSessionResponse(WorkoutSessionCreate):
+    id: int
+    ai_analysis: Optional[str] = None
+    sets: List[WorkoutSetResponse] = []
+    class Config:
+        from_attributes = True
+
+class GenerateWorkoutRequest(BaseModel):
+    profile_data: Dict[str, Any]
+    context: Dict[str, Any]
+
+class AIExercise(BaseModel):
+    name: str
+    sets: int
+    reps: Union[str, int]
+    rest: int
+    tips: str
+    recording_mode: str = "LOAD_REPS"
+    @field_validator('reps')
+    def force_string_reps(cls, v):
+        return str(v)
+
+class AIWorkoutPlan(BaseModel):
+    title: str
+    coach_comment: str
+    warmup: List[str]
+    exercises: List[AIExercise]
+    cooldown: List[str]
+
+# --- USER & AUTH ---
+class UserCreate(BaseModel):
+    username: str
+    email: Optional[str] = None
+    password: str
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: Optional[str] = None
+    profile_data: Optional[str] = None 
+    class Config:
+        from_attributes = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+# --- FEED ---
+class FeedItemType(str, Enum):
+    INFO = "INFO"
+    ANALYSIS = "ANALYSIS"
+    ACTION = "ACTION"
+    ALERT = "ALERT"
+
+class FeedItemCreate(BaseModel):
+    type: FeedItemType
+    title: str
+    message: str
+    priority: int = 1
+    action_payload: Optional[Dict[str, Any]] = None
+
+class FeedItemResponse(FeedItemCreate):
+    id: str
+    is_read: bool
+    is_completed: bool
+    created_at: datetime
+    
+    @field_validator('action_payload', mode='before')
+    def parse_payload(cls, v):
+        if isinstance(v, str) and v.strip():
+            try: return json.loads(v)
+            except: return None
+        return v
+    class Config:
+        from_attributes = True
+
+# --- PERFORMANCE ---
+class OneRepMaxRequest(BaseModel):
+    weight: float
+    reps: int
+class OneRepMaxResponse(BaseModel):
+    estimated_1rm: float
+    method_used: str
+class ACWRRequest(BaseModel):
+    history: List[Dict[str, Any]]
+class ACWRResponse(BaseModel):
+    ratio: float
+    status: str
+    color: str
+    message: str
+class ProfileAuditRequest(BaseModel):
+    profile_data: Dict[str, Any]
+class ProfileAuditResponse(BaseModel):
+    markdown_report: str
+class StrategyResponse(BaseModel):
+    periodization_title: str
+    phases: List[Any]
+class WeeklyPlanResponse(BaseModel):
+    schedule: List[Any]
+    reasoning: str
+class UserProfileUpdate(BaseModel):
+    profile_data: Dict[str, Any]
+"""
+
+# --- 2. FIND AND OVERWRITE ---
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def find_file(relative_variants):
-    """Cherche un fichier parmi plusieurs chemins possibles"""
-    for rel_path in relative_variants:
-        full_path = os.path.join(BASE_DIR, rel_path)
-        if os.path.exists(full_path):
-            return full_path
-    return None
+# List of potential paths to schemas.py
+potential_paths = [
+    "backend/app/models/schemas.py",
+    "app/models/schemas.py",
+    "models/schemas.py"
+]
 
-# Détection automatique des chemins
-SCHEMAS_PATH = find_file([
-    "backend/app/models/schemas.py",  # Si lancé depuis la racine
-    "app/models/schemas.py",          # Si lancé depuis backend/
-    "models/schemas.py"               # Si lancé depuis app/
-])
+target_file = None
+for p in potential_paths:
+    full_path = os.path.join(BASE_DIR, p)
+    if os.path.exists(full_path):
+        target_file = full_path
+        break
 
-MAIN_PATH = find_file([
-    "backend/app/main.py",            # Si lancé depuis la racine
-    "app/main.py",                    # Si lancé depuis backend/
-    "main.py"                         # Si lancé depuis app/
-])
-
-def fix_schemas():
-    """Corrige l'AttributeError dans CoachMemoryResponse"""
-    if not SCHEMAS_PATH:
-        print("❌ Impossible de trouver schemas.py")
-        return
-
-    print(f"🔧 Réparation de {SCHEMAS_PATH}...")
-    
+if target_file:
+    print(f"🎯 Target found: {target_file}")
     try:
-        with open(SCHEMAS_PATH, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        
-        new_lines = []
-        fixed = False
-        for line in lines:
-            # Recherche de la ligne cassée
-            if 'readiness_score: int = Field(alias="current_context"' in line and '.get(' in line:
-                # Remplacement par la syntaxe valide Pydantic
-                new_lines.append('    readiness_score: int = Field(alias="current_context", default=50)\n')
-                fixed = True
-            else:
-                new_lines.append(line)
-        
-        if fixed:
-            with open(SCHEMAS_PATH, "w", encoding="utf-8") as f:
-                f.writelines(new_lines)
-            print("✅ schemas.py réparé.")
-        else:
-            print("ℹ️ schemas.py semblait déjà correct (ou motif introuvable).")
-            
+        with open(target_file, "w", encoding="utf-8") as f:
+            f.write(CORRECT_SCHEMAS_CONTENT)
+        print("✅ SUCCESS: schemas.py has been completely overwritten with the fix.")
+        print("🚀 Please restart your server now.")
     except Exception as e:
-        print(f"❌ Erreur sur schemas.py: {e}")
-
-def fix_main():
-    """Corrige les imports en doublon dans main.py"""
-    if not MAIN_PATH:
-        print("❌ Impossible de trouver main.py")
-        return
-
-    print(f"🔧 Réparation de {MAIN_PATH}...")
-    
-    try:
-        with open(MAIN_PATH, "r", encoding="utf-8") as f:
-            content = f.read()
-        
-        # 1. Correction de la ligne d'import corrompue
-        bad_import = "from app.routers import performance, safety, auth, workouts, coach, user, feed, profiles, profiles, athlete_profiles, coach_memories"
-        good_import = "from app.routers import performance, safety, auth, workouts, coach, user, feed, profiles"
-        
-        if bad_import in content:
-            content = content.replace(bad_import, good_import)
-            print("✅ Imports des routeurs corrigés.")
-            
-        # 2. Suppression des inclusions de routeurs en double
-        if content.count("app.include_router(profiles.router)") > 1:
-            parts = content.split("app.include_router(profiles.router)")
-            # On garde la première partie + une inclusion + la dernière partie
-            content = parts[0] + "app.include_router(profiles.router)" + parts[-1]
-            print("✅ Doublons include_router supprimés.")
-
-        with open(MAIN_PATH, "w", encoding="utf-8") as f:
-            f.write(content)
-            
-    except Exception as e:
-        print(f"❌ Erreur sur main.py: {e}")
-
-if __name__ == "__main__":
-    print(f"📂 Dossier de travail : {BASE_DIR}")
-    fix_schemas()
-    fix_main()
-    print("\n🚀 Réparations terminées.")
+        print(f"❌ Failed to write file: {e}")
+else:
+    print("❌ ERROR: Could not find schemas.py in any expected location.")
+    print(f"Current Directory: {BASE_DIR}")
+    print("Files in current dir:", os.listdir(BASE_DIR))
