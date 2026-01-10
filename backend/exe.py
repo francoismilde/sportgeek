@@ -1,6 +1,6 @@
 import os
 
-# Chemins possibles pour main.py
+# Liste des chemins possibles pour main.py
 possible_paths = [
     os.path.join("backend", "app", "main.py"),
     os.path.join("app", "main.py"),
@@ -17,53 +17,45 @@ if not target_file:
     print("❌ Impossible de trouver main.py")
     exit(1)
 
-print(f"🔧 Correction des imports dans : {target_file}")
+print(f"🔧 Réparation finale de : {target_file}")
 
 with open(target_file, "r", encoding="utf-8") as f:
-    content = f.read()
+    lines = f.readlines()
 
-# 1. On cherche la ligne d'import des routeurs
-# Elle ressemble généralement à : from app.routers import performance, safety...
-if "from app.routers import" in content:
-    # On vérifie si athlete_profiles est déjà importé
-    if "athlete_profiles" not in content:
-        print("⚠️  'athlete_profiles' manquant dans les imports.")
-        
-        # On remplace la ligne d'import pour ajouter les modules manquants
-        # On cherche une ancre connue (le module 'user' ou 'feed')
-        if "from app.routers import" in content:
-            # On remplace toute la ligne d'import par la version complète
-            # On utilise une Regex ou un replace simple si on connaît la structure
-            
-            # Approche simple : on ajoute une nouvelle ligne d'import explicite
-            # C'est plus sûr que de tenter de modifier une ligne existante qui peut varier
-            new_import = "from app.routers import athlete_profiles, coach_memories\n"
-            
-            # On l'insère juste après la ligne from app.routers import existante
-            lines = content.splitlines()
-            new_lines = []
-            import_added = False
-            
-            for line in lines:
-                new_lines.append(line)
-                if "from app.routers import" in line and not import_added:
-                    new_lines.append(new_import)
-                    import_added = True
-            
-            new_content = "\n".join(new_lines)
-            
-            with open(target_file, "w", encoding="utf-8") as f:
-                f.write(new_content)
-                
-            print("✅ Import ajouté : athlete_profiles et coach_memories")
-    else:
-        print("ℹ️  'athlete_profiles' semble déjà importé.")
-else:
-    print("❌ Impossible de localiser la zone d'imports dans main.py")
+new_lines = []
+import_fixed = False
 
-# Vérification finale
-with open(target_file, "r", encoding="utf-8") as f:
-    if "athlete_profiles" in f.read():
-        print("🚀 Réparation validée.")
+# On parcourt le fichier ligne par ligne
+for line in lines:
+    # On repère la ligne des imports de routeurs
+    if "from app.routers import" in line:
+        if not import_fixed:
+            # On remplace cette ligne (et potentiellement les suivantes si c'était multiligne)
+            # par une ligne unique et complète qui inclut TOUT.
+            print("📝 Remplacement de la ligne d'import...")
+            new_lines.append("from app.routers import performance, safety, auth, workouts, coach, user, feed, profiles, athlete_profiles, coach_memories\n")
+            import_fixed = True
+        else:
+            # Si on a déjà mis notre ligne fixée, on ignore les autres lignes d'imports de routeurs
+            # (cas où l'ancien script aurait mis des doublons)
+            continue
     else:
-        print("⚠️  La réparation semble avoir échoué.")
+        new_lines.append(line)
+
+# Sécurité : Si on n'a pas trouvé la ligne, on l'ajoute après les imports système
+if not import_fixed:
+    print("⚠️ Ligne d'import introuvable, insertion forcée en tête.")
+    final_lines = []
+    inserted = False
+    for line in new_lines:
+        final_lines.append(line)
+        if "from sqlalchemy" in line and not inserted:
+             final_lines.append("from app.routers import performance, safety, auth, workouts, coach, user, feed, profiles, athlete_profiles, coach_memories\n")
+             inserted = True
+    new_lines = final_lines
+
+# Écriture du fichier corrigé
+with open(target_file, "w", encoding="utf-8") as f:
+    f.writelines(new_lines)
+
+print("✅ main.py a été réécrit avec les imports complets.")
