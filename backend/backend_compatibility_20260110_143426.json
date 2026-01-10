@@ -1,0 +1,271 @@
+{
+  "timestamp": "2026-01-10T14:34:25.836813",
+  "environment": {
+    "DATABASE_URL": "postgresql://postgres.bhakdiatokfzotmmwyco:SuperCoach2024Projet@aws-1-eu-west-1.pooler.supabase.com:6543/postgres",
+    "SECRET_KEY": "D\u00c9FINIE",
+    "GEMINI_API_KEY": "MANQUANTE",
+    "ALGORITHM": "HS256",
+    "ACCESS_TOKEN_EXPIRE_MINUTES": "10080"
+  },
+  "database": {
+    "connection": "\u2705 OK",
+    "latency_ms": 26.13,
+    "tables_found": 11,
+    "critical_tables_found": 6,
+    "missing_tables": [],
+    "all_tables": [
+      "analytics_processed_sessions",
+      "athlete_profiles",
+      "benchmark_history",
+      "coach_memories",
+      "exercises",
+      "feed_items",
+      "progression_state",
+      "user_data",
+      "users",
+      "workout_sessions",
+      "workout_sets"
+    ],
+    "constraints": [
+      "analytics_processed_sessions.2200_18841_1_not_null (CHECK)",
+      "analytics_processed_sessions.analytics_processed_sessions_user_id_fkey (FOREIGN KEY)",
+      "analytics_processed_sessions.analytics_processed_sessions_pkey (PRIMARY KEY)",
+      "athlete_profiles.2200_26896_1_not_null (CHECK)",
+      "athlete_profiles.athlete_profiles_user_id_fkey (FOREIGN KEY)",
+      "athlete_profiles.athlete_profiles_pkey (PRIMARY KEY)",
+      "athlete_profiles.athlete_profiles_user_id_key (UNIQUE)",
+      "benchmark_history.2200_18807_1_not_null (CHECK)",
+      "benchmark_history.benchmark_history_user_id_fkey (FOREIGN KEY)",
+      "benchmark_history.benchmark_history_pkey (PRIMARY KEY)",
+      "coach_memories.2200_26922_1_not_null (CHECK)",
+      "coach_memories.coach_memories_athlete_profile_id_fkey (FOREIGN KEY)",
+      "coach_memories.coach_memories_pkey (PRIMARY KEY)",
+      "coach_memories.coach_memories_athlete_profile_id_key (UNIQUE)",
+      "exercises.2200_18756_1_not_null (CHECK)",
+      "exercises.exercises_pkey (PRIMARY KEY)",
+      "exercises.exercises_name_key (UNIQUE)",
+      "feed_items.2200_26873_1_not_null (CHECK)",
+      "feed_items.feed_items_user_id_fkey (FOREIGN KEY)",
+      "feed_items.feed_items_pkey (PRIMARY KEY)",
+      "progression_state.2200_18825_1_not_null (CHECK)",
+      "progression_state.progression_state_user_id_fkey (FOREIGN KEY)",
+      "progression_state.progression_state_pkey (PRIMARY KEY)",
+      "progression_state.progression_state_user_id_exercise_ref_key (UNIQUE)",
+      "user_data.2200_18745_1_not_null (CHECK)",
+      "user_data.user_data_pkey (PRIMARY KEY)",
+      "user_data.user_data_name_key (UNIQUE)",
+      "users.2200_20190_1_not_null (CHECK)",
+      "users.users_pkey (PRIMARY KEY)",
+      "users.users_email_key (UNIQUE)",
+      "workout_sessions.2200_20201_1_not_null (CHECK)",
+      "workout_sessions.workout_sessions_user_id_fkey (FOREIGN KEY)",
+      "workout_sessions.workout_sessions_pkey (PRIMARY KEY)",
+      "workout_sets.2200_18786_1_not_null (CHECK)",
+      "workout_sets.workout_sets_exercise_id_fkey (FOREIGN KEY)",
+      "workout_sets.workout_sets_pkey (PRIMARY KEY)"
+    ]
+  },
+  "api_endpoints": {
+    "tested": 16,
+    "successful": 0,
+    "failed": 16,
+    "warnings": 0,
+    "details": {
+      "/health": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 8000, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 8000)]",
+        "result": "\u274c ERREUR"
+      },
+      "/docs": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('127.0.0.1', 8000), [Errno 111] Connect call failed ('::1', 8000, 0, 0)]",
+        "result": "\u274c ERREUR"
+      },
+      "/redoc": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 8000, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 8000)]",
+        "result": "\u274c ERREUR"
+      },
+      "/auth/signup": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('127.0.0.1', 8000), [Errno 111] Connect call failed ('::1', 8000, 0, 0)]",
+        "result": "\u274c ERREUR"
+      },
+      "/auth/token": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 8000, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 8000)]",
+        "result": "\u274c ERREUR"
+      },
+      "/user/profile": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('127.0.0.1', 8000), [Errno 111] Connect call failed ('::1', 8000, 0, 0)]",
+        "result": "\u274c ERREUR"
+      },
+      "/workouts/": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 8000, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 8000)]",
+        "result": "\u274c ERREUR"
+      },
+      "/feed/": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('127.0.0.1', 8000), [Errno 111] Connect call failed ('::1', 8000, 0, 0)]",
+        "result": "\u274c ERREUR"
+      },
+      "/api/v1/profiles/me": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 8000, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 8000)]",
+        "result": "\u274c ERREUR"
+      },
+      "/api/v1/coach-memories/me": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('127.0.0.1', 8000), [Errno 111] Connect call failed ('::1', 8000, 0, 0)]",
+        "result": "\u274c ERREUR"
+      },
+      "/coach/audit": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 8000, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 8000)]",
+        "result": "\u274c ERREUR"
+      },
+      "/coach/strategy": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('127.0.0.1', 8000), [Errno 111] Connect call failed ('::1', 8000, 0, 0)]",
+        "result": "\u274c ERREUR"
+      },
+      "/coach/week": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 8000, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 8000)]",
+        "result": "\u274c ERREUR"
+      },
+      "/performance/1rm": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('127.0.0.1', 8000), [Errno 111] Connect call failed ('::1', 8000, 0, 0)]",
+        "result": "\u274c ERREUR"
+      },
+      "/safety/acwr": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 8000, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 8000)]",
+        "result": "\u274c ERREUR"
+      },
+      "/fix_db": {
+        "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('127.0.0.1', 8000), [Errno 111] Connect call failed ('::1', 8000, 0, 0)]",
+        "result": "\u274c ERREUR"
+      }
+    }
+  },
+  "data_models": {
+    "User": {
+      "status": "\u2705 VALIDE",
+      "columns": [
+        "id",
+        "username",
+        "email",
+        "hashed_password",
+        "profile_data",
+        "strategy_data",
+        "weekly_plan_data",
+        "draft_workout_data"
+      ],
+      "relationships": [
+        "workouts",
+        "feed_items",
+        "athlete_profile"
+      ],
+      "table_name": "users"
+    },
+    "AthleteProfile": {
+      "status": "\u2705 VALIDE",
+      "columns": [
+        "id",
+        "user_id",
+        "basic_info",
+        "physical_metrics",
+        "sport_context",
+        "performance_baseline",
+        "injury_prevention",
+        "training_preferences",
+        "goals",
+        "constraints",
+        "created_at",
+        "updated_at"
+      ],
+      "relationships": [
+        "user",
+        "coach_memory"
+      ],
+      "table_name": "athlete_profiles"
+    },
+    "CoachMemory": {
+      "status": "\u2705 VALIDE",
+      "columns": [
+        "id",
+        "athlete_profile_id",
+        "metadata_info",
+        "current_context",
+        "response_patterns",
+        "performance_baselines",
+        "adaptation_signals",
+        "sport_specific_insights",
+        "training_history_summary",
+        "athlete_preferences",
+        "coach_notes",
+        "memory_flags",
+        "last_updated"
+      ],
+      "relationships": [
+        "athlete_profile"
+      ],
+      "table_name": "coach_memories"
+    },
+    "WorkoutSession": {
+      "status": "\u2705 VALIDE",
+      "columns": [
+        "id",
+        "user_id",
+        "date",
+        "duration",
+        "rpe",
+        "energy_level",
+        "notes",
+        "ai_analysis",
+        "created_at"
+      ],
+      "relationships": [
+        "owner",
+        "sets"
+      ],
+      "table_name": "workout_sessions"
+    },
+    "WorkoutSet": {
+      "status": "\u2705 VALIDE",
+      "columns": [
+        "id",
+        "session_id",
+        "exercise_name",
+        "set_order",
+        "weight",
+        "reps",
+        "rpe",
+        "rest_seconds",
+        "metric_type"
+      ],
+      "relationships": [
+        "session"
+      ],
+      "table_name": "workout_sets"
+    },
+    "FeedItem": {
+      "status": "\u2705 VALIDE",
+      "columns": [
+        "id",
+        "user_id",
+        "type",
+        "title",
+        "message",
+        "action_payload",
+        "is_read",
+        "is_completed",
+        "priority",
+        "created_at"
+      ],
+      "relationships": [
+        "owner"
+      ],
+      "table_name": "feed_items"
+    }
+  },
+  "security": {
+    "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 8000, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 8000)]"
+  },
+  "performance": {
+    "error": "Cannot connect to host localhost:8000 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 8000, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 8000)]"
+  },
+  "issues": [
+    "\u26a0\ufe0f GEMINI_API_KEY non d\u00e9finie (Coach IA d\u00e9sactiv\u00e9)"
+  ],
+  "recommendations": []
+}

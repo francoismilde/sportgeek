@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 # --- IMPORTS DES ROUTEURS ---
 # [MODIFICATION] Ajout de 'feed'
-from app.routers import performance, safety, auth, workouts, coach, user, feed, profiles, athlete_profiles, coach_memories
+from .routers import performance, safety, auth, workouts, coach, user, feed, profiles, athlete_profiles, coach_memories
 from app.core.database import engine, Base
 
 # Configuration des logs
