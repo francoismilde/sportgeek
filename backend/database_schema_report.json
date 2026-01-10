@@ -1,0 +1,799 @@
+{
+  "environment": {
+    "database_url": "aws-1-eu-west-1.pooler.supabase.com:6543/postgres",
+    "database_dialect": "postgresql",
+    "tables_count": 11
+  },
+  "tables": {
+    "workout_sessions": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": false,
+          "default": "nextval('workout_sessions_id_seq'::regclass)",
+          "primary_key": false
+        },
+        {
+          "name": "date",
+          "type": "DATE",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "duration",
+          "type": "DOUBLE PRECISION",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "rpe",
+          "type": "DOUBLE PRECISION",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "energy_level",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": "5",
+          "primary_key": false
+        },
+        {
+          "name": "notes",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "ai_analysis",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "nullable": true,
+          "default": "CURRENT_TIMESTAMP",
+          "primary_key": false
+        }
+      ],
+      "row_count": 1
+    },
+    "feed_items": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "VARCHAR",
+          "nullable": false,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "type",
+          "type": "VARCHAR",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "title",
+          "type": "VARCHAR",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "message",
+          "type": "VARCHAR",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "action_payload",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "is_read",
+          "type": "BOOLEAN",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "is_completed",
+          "type": "BOOLEAN",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "priority",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "nullable": true,
+          "default": "now()",
+          "primary_key": false
+        }
+      ],
+      "row_count": 0
+    },
+    "users": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": false,
+          "default": "nextval('users_id_seq'::regclass)",
+          "primary_key": false
+        },
+        {
+          "name": "username",
+          "type": "VARCHAR",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "hashed_password",
+          "type": "VARCHAR",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "email",
+          "type": "VARCHAR",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "profile_data",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "strategy_data",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "weekly_plan_data",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "draft_workout_data",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        }
+      ],
+      "row_count": 1
+    },
+    "coach_memories": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": false,
+          "default": "nextval('coach_memories_id_seq'::regclass)",
+          "primary_key": false
+        },
+        {
+          "name": "athlete_profile_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "metadata_info",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "current_context",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "response_patterns",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "performance_baselines",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "adaptation_signals",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "sport_specific_insights",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "training_history_summary",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "athlete_preferences",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "coach_notes",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "memory_flags",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "last_updated",
+          "type": "TIMESTAMP",
+          "nullable": true,
+          "default": "now()",
+          "primary_key": false
+        }
+      ],
+      "row_count": 1
+    },
+    "athlete_profiles": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": false,
+          "default": "nextval('athlete_profiles_id_seq'::regclass)",
+          "primary_key": false
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "basic_info",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "physical_metrics",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "sport_context",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "performance_baseline",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "injury_prevention",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "training_preferences",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "goals",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "constraints",
+          "type": "JSON",
+          "nullable": true,
+          "default": "'{}'::json",
+          "primary_key": false
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "nullable": true,
+          "default": "now()",
+          "primary_key": false
+        },
+        {
+          "name": "updated_at",
+          "type": "TIMESTAMP",
+          "nullable": true,
+          "default": "now()",
+          "primary_key": false
+        }
+      ],
+      "row_count": 1
+    },
+    "analytics_processed_sessions": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": false,
+          "default": "nextval('analytics_processed_sessions_id_seq'::regclass)",
+          "primary_key": false
+        },
+        {
+          "name": "session_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "sport_type",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "tss_score",
+          "type": "REAL",
+          "nullable": true,
+          "default": "0",
+          "primary_key": false
+        },
+        {
+          "name": "intensity_factor",
+          "type": "REAL",
+          "nullable": true,
+          "default": "0",
+          "primary_key": false
+        },
+        {
+          "name": "variability_index",
+          "type": "REAL",
+          "nullable": true,
+          "default": "0",
+          "primary_key": false
+        },
+        {
+          "name": "recovery_hours_needed",
+          "type": "REAL",
+          "nullable": true,
+          "default": "0",
+          "primary_key": false
+        },
+        {
+          "name": "neural_fatigue_flag",
+          "type": "BOOLEAN",
+          "nullable": true,
+          "default": "false",
+          "primary_key": false
+        },
+        {
+          "name": "return_to_training_date",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "kcal_burned",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": "0",
+          "primary_key": false
+        },
+        {
+          "name": "glycogen_cost_grams",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": "0",
+          "primary_key": false
+        },
+        {
+          "name": "raw_file_hash",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        }
+      ],
+      "row_count": 0
+    },
+    "progression_state": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": false,
+          "default": "nextval('progression_state_id_seq'::regclass)",
+          "primary_key": false
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "exercise_ref",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "training_max",
+          "type": "REAL",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "next_session_target",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "last_updated",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        }
+      ],
+      "row_count": 0
+    },
+    "benchmark_history": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": false,
+          "default": "nextval('benchmark_history_id_seq'::regclass)",
+          "primary_key": false
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "date",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "exercise_ref",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "primary_value",
+          "type": "REAL",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "secondary_value",
+          "type": "REAL",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "unit",
+          "type": "TEXT",
+          "nullable": true,
+          "default": "'kg'::text",
+          "primary_key": false
+        },
+        {
+          "name": "optimization",
+          "type": "TEXT",
+          "nullable": true,
+          "default": "'MAX'::text",
+          "primary_key": false
+        },
+        {
+          "name": "source",
+          "type": "TEXT",
+          "nullable": true,
+          "default": "'auto_detection'::text",
+          "primary_key": false
+        },
+        {
+          "name": "is_validated",
+          "type": "BOOLEAN",
+          "nullable": true,
+          "default": "false",
+          "primary_key": false
+        }
+      ],
+      "row_count": 19
+    },
+    "exercises": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": false,
+          "default": "nextval('exercises_id_seq'::regclass)",
+          "primary_key": false
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "muscle_group",
+          "type": "TEXT",
+          "nullable": true,
+          "default": "'Global'::text",
+          "primary_key": false
+        },
+        {
+          "name": "type",
+          "type": "TEXT",
+          "nullable": true,
+          "default": "'strength'::text",
+          "primary_key": false
+        }
+      ],
+      "row_count": 69
+    },
+    "workout_sets": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": false,
+          "default": "nextval('workout_sets_id_seq'::regclass)",
+          "primary_key": false
+        },
+        {
+          "name": "session_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "exercise_id",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "set_order",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "weight_kg",
+          "type": "REAL",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "reps",
+          "type": "REAL",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "rpe_local",
+          "type": "REAL",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "velocity_ms",
+          "type": "REAL",
+          "nullable": true,
+          "default": "0",
+          "primary_key": false
+        },
+        {
+          "name": "rest_seconds",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": "0",
+          "primary_key": false
+        },
+        {
+          "name": "target_weight_kg",
+          "type": "REAL",
+          "nullable": true,
+          "default": "0",
+          "primary_key": false
+        },
+        {
+          "name": "target_reps",
+          "type": "INTEGER",
+          "nullable": true,
+          "default": "0",
+          "primary_key": false
+        },
+        {
+          "name": "exercise_name",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "weight",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "rpe",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "metric_type",
+          "type": "VARCHAR",
+          "nullable": true,
+          "default": "'LOAD_REPS'::character varying",
+          "primary_key": false
+        }
+      ],
+      "row_count": 0
+    },
+    "user_data": {
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "nullable": false,
+          "default": "nextval('user_data_id_seq'::regclass)",
+          "primary_key": false
+        },
+        {
+          "name": "name",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "json_content",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "password",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        },
+        {
+          "name": "session_token",
+          "type": "TEXT",
+          "nullable": true,
+          "default": null,
+          "primary_key": false
+        }
+      ],
+      "row_count": 5
+    }
+  }
+}
