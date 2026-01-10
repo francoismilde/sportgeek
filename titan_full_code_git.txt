@@ -7,6 +7,35 @@
 
 -e 
 ================================================================================
+📄 FICHIER : backend/add_safe_cache.py
+================================================================================
+import re
+
+with open('app/routers/coach.py', 'r') as f:
+    content = f.read()
+
+# Trouver generate_workout et ajouter un décorateur safe
+func_pattern = r'async def generate_workout\([\s\S]*?\):'
+match = re.search(func_pattern, content)
+
+if match:
+    func_start = match.start()
+    
+    # Ajouter le décorateur safe (ignore current_user)
+    decorated_func = '@cached_response_fixed(ttl_hours=6, ignore_args=["current_user"])\n' + match.group(0)
+    
+    new_content = content[:func_start] + decorated_func + content[func_start + len(match.group(0)):]
+    
+    with open('app/routers/coach.py', 'w') as f:
+        f.write(new_content)
+    
+    print("✅ Décorateur safe ajouté à generate_workout")
+else:
+    print("⚠️  Impossible de trouver generate_workout")
+-e 
+
+-e 
+================================================================================
 📄 FICHIER : backend/app/__init__.py
 ================================================================================
 -e 
@@ -15,6 +44,224 @@
 ================================================================================
 📄 FICHIER : backend/app/core/__init__.py
 ================================================================================
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/core/cache.py
+================================================================================
+"""
+Cache intelligent pour les appels Gemini IA.
+Économise les coûts API et améliore la réactivité.
+"""
+import json
+import hashlib
+from datetime import datetime, timedelta
+from typing import Any, Optional
+from functools import wraps
+import logging
+
+logger = logging.getLogger(__name__)
+
+class IntelligentCache:
+    """Cache mémoire avec expiration et invalidation intelligente."""
+    
+    def __init__(self, default_ttl_hours: int = 24):
+        self._cache = {}
+        self.default_ttl = default_ttl_hours
+    
+    def _generate_key(self, *args, **kwargs) -> str:
+        """Génère une clé unique à partir des paramètres."""
+        data = json.dumps({
+            'args': args,
+            'kwargs': kwargs
+        }, sort_keys=True)
+        return hashlib.md5(data.encode()).hexdigest()
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Récupère un élément du cache s'il est valide."""
+        if key in self._cache:
+            entry = self._cache[key]
+            if datetime.now() < entry['expires_at']:
+                logger.debug(f"📦 Cache hit: {key}")
+                return entry['data']
+            else:
+                del self._cache[key]
+                logger.debug(f"🧹 Cache expired: {key}")
+        return None
+    
+    def set(self, key: str, data: Any, ttl_hours: Optional[int] = None):
+        """Stocke un élément dans le cache."""
+        ttl = ttl_hours if ttl_hours is not None else self.default_ttl
+        self._cache[key] = {
+            'data': data,
+            'expires_at': datetime.now() + timedelta(hours=ttl),
+            'created_at': datetime.now()
+        }
+        logger.debug(f"💾 Cache stored: {key} (TTL: {ttl}h)")
+    
+    def clear_old_entries(self):
+        """Nettoie les entrées expirées."""
+        now = datetime.now()
+        expired_keys = [
+            k for k, v in self._cache.items() 
+            if now >= v['expires_at']
+        ]
+        for k in expired_keys:
+            del self._cache[k]
+        if expired_keys:
+            logger.info(f"🧹 Cache cleanup: {len(expired_keys)} entrées expirées")
+
+# Instance globale
+ai_cache = IntelligentCache(default_ttl_hours=6)  # 6h pour les plans IA
+
+def cached_response(ttl_hours: int = 6):
+    """Décorateur pour mettre en cache les réponses IA."""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Générer une clé unique
+            cache_key = f"{func.__name__}:{ai_cache._generate_key(*args, **kwargs)}"
+            
+            # Vérifier le cache
+            cached = ai_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            
+            # Exécuter la fonction
+            result = await func(*args, **kwargs)
+            
+            # Mettre en cache
+            if result is not None:
+                ai_cache.set(cache_key, result, ttl_hours)
+            
+            return result
+        return wrapper
+    return decorator
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/core/cache_fixed.py
+================================================================================
+"""
+Version corrigée du décorateur de cache qui ignore les objets non sérialisables
+"""
+
+import json
+import hashlib
+from datetime import datetime, timedelta
+from typing import Any, Optional, Callable
+from functools import wraps
+import logging
+
+logger = logging.getLogger(__name__)
+
+class FixedIntelligentCache:
+    """Cache mémoire avec gestion des objets non sérialisables."""
+    
+    def __init__(self, default_ttl_hours: int = 24):
+        self._cache = {}
+        self.default_ttl = default_ttl_hours
+    
+    def _safe_serialize(self, obj: Any) -> Any:
+        """Sérialise en toute sécurité, convertissant les objets SQLAlchemy en dict."""
+        if hasattr(obj, '__dict__'):
+            # Si c'est un modèle SQLAlchemy, on prend son ID
+            if hasattr(obj, 'id'):
+                return f"{obj.__class__.__name__}:{obj.id}"
+            # Sinon, on convertit en dict sans les relations
+            return {k: self._safe_serialize(v) for k, v in obj.__dict__.items() 
+                    if not k.startswith('_')}
+        elif isinstance(obj, (list, tuple)):
+            return [self._safe_serialize(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {k: self._safe_serialize(v) for k, v in obj.items()}
+        else:
+            return obj
+    
+    def _generate_key(self, *args, **kwargs) -> str:
+        """Génère une clé unique en sérialisant en toute sécurité."""
+        safe_args = self._safe_serialize(args)
+        safe_kwargs = self._safe_serialize(kwargs)
+        
+        data = json.dumps({
+            'args': safe_args,
+            'kwargs': safe_kwargs
+        }, sort_keys=True, default=str)
+        return hashlib.md5(data.encode()).hexdigest()
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Récupère un élément du cache s'il est valide."""
+        if key in self._cache:
+            entry = self._cache[key]
+            if datetime.now() < entry['expires_at']:
+                logger.debug(f"📦 Cache hit: {key}")
+                return entry['data']
+            else:
+                del self._cache[key]
+                logger.debug(f"🧹 Cache expired: {key}")
+        return None
+    
+    def set(self, key: str, data: Any, ttl_hours: Optional[int] = None):
+        """Stocke un élément dans le cache."""
+        ttl = ttl_hours if ttl_hours is not None else self.default_ttl
+        self._cache[key] = {
+            'data': data,
+            'expires_at': datetime.now() + timedelta(hours=ttl),
+            'created_at': datetime.now()
+        }
+        logger.debug(f"💾 Cache stored: {key} (TTL: {ttl}h)")
+    
+    def clear_old_entries(self):
+        """Nettoie les entrées expirées."""
+        now = datetime.now()
+        expired_keys = [
+            k for k, v in self._cache.items() 
+            if now >= v['expires_at']
+        ]
+        for k in expired_keys:
+            del self._cache[k]
+        if expired_keys:
+            logger.info(f"🧹 Cache cleanup: {len(expired_keys)} entrées expirées")
+
+# Instance globale
+ai_cache_fixed = FixedIntelligentCache(default_ttl_hours=6)
+
+def cached_response_fixed(ttl_hours: int = 6, ignore_args: list = None):
+    """
+    Décorateur corrigé pour mettre en cache les réponses IA.
+    ignore_args: liste des noms d'arguments à ignorer (ex: ['current_user'])
+    """
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Créer une copie des kwargs pour la génération de clé
+            cache_kwargs = kwargs.copy()
+            
+            # Ignorer les arguments spécifiés
+            if ignore_args:
+                for arg_name in ignore_args:
+                    cache_kwargs.pop(arg_name, None)
+            
+            # Générer une clé unique (sans les arguments ignorés)
+            cache_key = f"{func.__name__}:{ai_cache_fixed._generate_key(*args, **cache_kwargs)}"
+            
+            # Vérifier le cache
+            cached = ai_cache_fixed.get(cache_key)
+            if cached is not None:
+                return cached
+            
+            # Exécuter la fonction
+            result = await func(*args, **kwargs)
+            
+            # Mettre en cache
+            if result is not None:
+                ai_cache_fixed.set(cache_key, result, ttl_hours)
+            
+            return result
+        return wrapper
+    return decorator
 -e 
 
 -e 
@@ -1187,14 +1434,25 @@ async def audit_profile(
     payload: ProfileAuditRequest,
     current_user: sql_models.User = Depends(get_current_user)
 ):
-    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    """Audit du profil athlète par l'IA."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Clé API Gemini manquante.")
+    
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash')
         response = model.generate_content(get_profile_analysis_prompt(payload.profile_data))
-        # Ici on garde le texte brut car c'est du Markdown
+        
+        # Stocker l'audit localement
+        from app.core.database import get_db
+        from sqlalchemy.orm import Session
+        db = next(get_db())
+        current_user.profile_data = json.dumps(payload.profile_data)
+        db.commit()
+        
         return {"markdown_report": response.text}
     except Exception as e:
+        print(f"❌ Erreur audit: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- STRATÉGIE (Lecture & Écriture Persistante) ---
@@ -1209,7 +1467,8 @@ async def get_strategy(
     try:
         data = json.loads(current_user.strategy_data)
         return data
-    except:
+    except Exception as e:
+        print(f"❌ Erreur lecture stratégie: {e}")
         raise HTTPException(status_code=500, detail="Erreur lecture stratégie.")
 
 @router.post("/strategy", response_model=StrategyResponse)
@@ -1219,7 +1478,9 @@ async def generate_strategy(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """Génère ET sauvegarde la stratégie."""
-    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Clé API Gemini manquante.")
+    
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
@@ -1251,7 +1512,8 @@ async def get_week(
     try:
         data = json.loads(current_user.weekly_plan_data)
         return data
-    except:
+    except Exception as e:
+        print(f"❌ Erreur lecture semaine: {e}")
         raise HTTPException(status_code=500, detail="Erreur lecture semaine.")
 
 @router.post("/week", response_model=WeeklyPlanResponse)
@@ -1261,7 +1523,9 @@ async def generate_week(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """Génère ET sauvegarde la semaine type."""
-    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Clé API Gemini manquante.")
+    
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
@@ -1293,7 +1557,7 @@ async def get_draft_workout(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    [DEV-CARD #05] Récupère le brouillon de séance en cours (si existant).
+    Récupère le brouillon de séance en cours (si existant).
     Utile pour reprendre une session après un crash.
     """
     if not current_user.draft_workout_data:
@@ -1301,7 +1565,8 @@ async def get_draft_workout(
     
     try:
         return json.loads(current_user.draft_workout_data)
-    except:
+    except Exception as e:
+        print(f"❌ Erreur lecture brouillon: {e}")
         raise HTTPException(status_code=500, detail="Erreur lecture brouillon.")
 
 @router.delete("/workout/draft")
@@ -1310,13 +1575,14 @@ async def discard_draft_workout(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    [DEV-CARD #05-B] Supprime explicitement le brouillon (Abandon).
+    Supprime explicitement le brouillon (Abandon).
     """
     try:
         current_user.draft_workout_data = None
         db.commit()
         return {"status": "success", "message": "Brouillon supprimé."}
     except Exception as e:
+        print(f"❌ Erreur suppression brouillon: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/workout", response_model=AIWorkoutPlan)
@@ -1328,7 +1594,9 @@ async def generate_workout(
     """
     Génère une séance détaillée ET la sauvegarde en brouillon.
     """
-    if not GEMINI_API_KEY: raise HTTPException(status_code=500, detail="Clé API manquante.")
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Clé API Gemini manquante.")
+    
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
@@ -1340,21 +1608,41 @@ async def generate_workout(
         clean_text = clean_ai_json(response.text)
         parsed_response = json.loads(clean_text)
         
+        # Validation de la structure
         if isinstance(parsed_response, list):
             if parsed_response:
                 parsed_response = parsed_response[0]
             else:
                 raise ValueError("L'IA a renvoyé une liste vide.")
         
-        # [DEV-CARD #05] Sauvegarde automatique du brouillon
+        # Validation des exercices
+        if "exercises" not in parsed_response:
+            parsed_response["exercises"] = []
+        
+        # S'assurer que chaque exercice a un recording_mode
+        for exercise in parsed_response["exercises"]:
+            if "recording_mode" not in exercise:
+                exercise["recording_mode"] = "LOAD_REPS"
+        
+        # Sauvegarde automatique du brouillon
         current_user.draft_workout_data = json.dumps(parsed_response)
         db.commit()
         db.refresh(current_user)
 
         return parsed_response
+    except json.JSONDecodeError as e:
+        print(f"❌ Erreur JSON IA: {e}")
+        print(f"Texte brut reçu: {clean_text[:500]}...")
+        raise HTTPException(
+            status_code=500, 
+            detail="L'IA a renvoyé une réponse invalide. Veuillez réessayer."
+        )
     except Exception as e:
         print(f"❌ Erreur Workout Gen: {e}")
-        raise HTTPException(status_code=500, detail=str(e))-e 
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Erreur lors de la génération: {str(e)}"
+        )-e 
 
 -e 
 ================================================================================
@@ -1560,6 +1848,59 @@ async def create_workout(
     db: Session = Depends(get_db),
     current_user: sql_models.User = Depends(get_current_user)
 ):
+    # --- VALIDATION PHYSIOLOGIQUE ---
+    def validate_physiological_limits(workout: schemas.WorkoutSessionCreate):
+        """Valide les limites physiologiques humaines."""
+        
+        # Durée réaliste (10min à 4h)
+        if workout.duration < 10 or workout.duration > 240:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Durée invalide ({workout.duration} min). Doit être entre 10 et 240 minutes."
+            )
+        
+        # RPE 1-10
+        if workout.rpe < 1 or workout.rpe > 10:
+            raise HTTPException(
+                status_code=400,
+                detail=f"RPE invalide ({workout.rpe}). Doit être entre 1 et 10."
+            )
+        
+        # Énergie 1-10
+        if workout.energy_level < 1 or workout.energy_level > 10:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Niveau d'énergie invalide ({workout.energy_level}). Doit être entre 1 et 10."
+            )
+        
+        # Validation des sets
+        for s in workout.sets:
+            # Watts max (record du monde ~2500W)
+            if s.metric_type == 'POWER_TIME' and s.weight > 2000:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Puissance impossible ({s.weight}W). Record du monde ~2500W."
+                )
+            
+            # Charge max (record +500kg)
+            if s.metric_type == 'LOAD_REPS' and s.weight > 500:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Charge impossible ({s.weight}kg). Record du monde ~500kg."
+                )
+            
+            # RPE série
+            if s.rpe and (s.rpe < 1 or s.rpe > 10):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"RPE série invalide ({s.rpe}). Doit être entre 1 et 10."
+                )
+        
+        return True
+
+    # Appliquer la validation
+    validate_physiological_limits(workout)
+
     """
     Enregistre une séance complète avec gestion du Polymorphisme (Metric Type).
     Vérifie la cohérence des données (ex: Watts max, RPE bounds).
@@ -1949,6 +2290,182 @@ class WorkoutAnalysisTrigger(BaseTrigger):
 
 -e 
 ================================================================================
+📄 FICHIER : backend/check_jwt_config.py
+================================================================================
+import os
+import jwt
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+
+print("🔧 Configuration JWT Actuelle:")
+print(f"   SECRET_KEY: {'SET' if SECRET_KEY else 'NOT SET'}")
+print(f"   ALGORITHM: {ALGORITHM}")
+print(f"   ACCESS_TOKEN_EXPIRE_MINUTES: {ACCESS_TOKEN_EXPIRE_MINUTES} min")
+
+# Vérifier si on peut générer un token
+if SECRET_KEY:
+    print("\n🧪 Test de génération de token...")
+    
+    data = {"sub": "testuser", "exp": datetime.utcnow() + timedelta(minutes=30)}
+    token = jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
+    
+    print(f"   Token généré: {token[:50]}...")
+    
+    # Vérifier qu'on peut le décoder
+    try:
+        decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        print(f"   ✅ Token décodé: {decoded}")
+    except Exception as e:
+        print(f"   ❌ Erreur décodage: {e}")
+else:
+    print("\n❌ SECRET_KEY non définie!")
+    print("   Définissez-la dans .env:")
+    print("   SECRET_KEY=votre_clef_secrete_tres_longue_ici")
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/check_model.py
+================================================================================
+from app.models.sql_models import User
+from sqlalchemy import inspect
+
+print("📋 Colonnes définies dans le modèle User:")
+for column in User.__table__.columns:
+    print(f"  • {column.name} ({column.type})")
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/debug_tokens.py
+================================================================================
+#!/usr/bin/env python3
+"""
+Debug JWT tokens - Vérifie pourquoi les tokens sont rejetés
+"""
+
+import jwt
+import os
+from datetime import datetime
+import sys
+
+# Charger les variables d'environnement
+from dotenv import load_dotenv
+load_dotenv()
+
+SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret_key_if_env_missing")
+ALGORITHM = "HS256"
+
+def decode_and_verify(token: str):
+    """Décode et vérifie un token JWT"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        
+        print("✅ TOKEN VALIDE")
+        print(f"📋 Payload: {payload}")
+        
+        # Vérifier l'expiration
+        exp_timestamp = payload.get('exp')
+        if exp_timestamp:
+            exp_date = datetime.fromtimestamp(exp_timestamp)
+            now = datetime.now()
+            time_left = exp_date - now
+            
+            print(f"⏰ Expiration: {exp_date}")
+            print(f"⏳ Temps restant: {time_left}")
+            
+            if time_left.total_seconds() < 0:
+                print("❌ TOKEN EXPIRE !")
+            else:
+                print("✅ Token encore valide")
+        
+        return payload
+    except jwt.ExpiredSignatureError:
+        print("❌ ERREUR: Token expiré")
+        return None
+    except jwt.InvalidTokenError as e:
+        print(f"❌ ERREUR: Token invalide - {e}")
+        return None
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python debug_tokens.py <token>")
+        print("Ou: python debug_tokens.py --check-all")
+        return
+    
+    if sys.argv[1] == "--check-all":
+        # Vérifier les tokens stockés dans un échantillon
+        sample_tokens = []
+        # Vous pouvez ajouter des tokens de test ici
+        for token in sample_tokens:
+            decode_and_verify(token)
+    else:
+        token = sys.argv[1]
+        decode_and_verify(token)
+
+if __name__ == "__main__":
+    main()-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/disable_coach_cache.py
+================================================================================
+import re
+
+with open('app/routers/coach.py', 'r') as f:
+    content = f.read()
+
+# Supprimer TOUTES les références à cache dans ce fichier
+content = re.sub(r'from app\.core\.cache import[^\n]*\n', '', content)
+content = re.sub(r'@cached_response[^\n]*\n', '', content)
+
+with open('app/routers/coach.py', 'w') as f:
+    f.write(new_content)
+
+print("✅ Cache complètement désactivé pour coach.py")
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/fix_coach_cache.py
+================================================================================
+#!/usr/bin/env python3
+"""
+Retire le décorateur @cached_response de la fonction generate_workout
+qui cause l'erreur de sérialisation JSON
+"""
+
+import re
+
+with open('app/routers/coach.py', 'r') as f:
+    content = f.read()
+
+# Trouver la fonction generate_workout
+pattern = r'@cached_response\(ttl_hours=6\)\s*\nasync def generate_workout'
+match = re.search(pattern, content)
+
+if match:
+    print("🔧 Retrait du décorateur @cached_response problématique...")
+    
+    # Retirer la ligne du décorateur
+    new_content = content.replace(match.group(0), 'async def generate_workout')
+    
+    with open('app/routers/coach.py', 'w') as f:
+        f.write(new_content)
+    
+    print("✅ Décorateur retiré avec succès")
+else:
+    print("✅ Le décorateur n'est pas présent ou a déjà été retiré")
+-e 
+
+-e 
+================================================================================
 📄 FICHIER : backend/fix_table.py
 ================================================================================
 from sqlalchemy import text
@@ -2106,10 +2623,19 @@ except Exception as e:
 ================================================================================
 import os
 import sqlalchemy
-from sqlalchemy import text
+from sqlalchemy import text, inspect
 from dotenv import load_dotenv
+import logging
+import sys
 
-# Charge les variables locales si test local, sinon prend celles de Render
+# Configuration du logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Charge les variables locales
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -2119,71 +2645,217 @@ if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 if not DATABASE_URL:
-    print("❌ Erreur : Pas de DATABASE_URL trouvée.")
-    exit(1)
+    logger.error("❌ Erreur : Pas de DATABASE_URL trouvée.")
+    sys.exit(1)
 
-print(f"🔌 Connexion à la BDD...")
+logger.info(f"🔌 Connexion à la BDD...")
 engine = sqlalchemy.create_engine(DATABASE_URL)
 
-with engine.connect() as connection:
-    # 1. On active le mode Transaction
-    trans = connection.begin()
-    try:
-        print("🛠️ Vérification des colonnes manquantes...")
-        
-        # --- MIGRATION WORKOUTS ---
-        connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"))
-        connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"))
-        connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"))
-        # [DEV-CARD #06] Ajout colonne analyse IA
-        connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS ai_analysis TEXT;"))
-        
-        print("✅ Table 'workout_sessions' vérifiée.")
+def table_exists(connection, table_name):
+    """Vérifie si une table existe"""
+    inspector = inspect(engine)
+    return table_name in inspector.get_table_names()
 
-        # --- MIGRATION SETS ---
-        connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
-        connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"))
-        print("✅ Table 'workout_sets' vérifiée.")
-        
-        # --- MIGRATION USERS ---
-        # Ajout de profile_data pour la sauvegarde du profil
-        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
-        
-        # Ajout des colonnes IA (Stratégie & Planning)
-        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"))
-        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
-        
-        # [FIX] Ajout de la colonne Brouillon (Draft) qui causait le crash
-        connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"))
-        
-        print("✅ Table 'users' vérifiée (profile, strategy, weekly, draft).")
-        
-        # --- [DEV-CARD #01] MIGRATION FEED ---
-        # On crée la table feed_items si elle n'existe pas
-        # Note : On utilise UUID en String pour l'ID
-        create_feed_table_sql = """
-        CREATE TABLE IF NOT EXISTS feed_items (
-            id VARCHAR PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id),
-            type VARCHAR,
-            title VARCHAR,
-            message VARCHAR,
-            action_payload TEXT,
-            is_read BOOLEAN DEFAULT FALSE,
-            is_completed BOOLEAN DEFAULT FALSE,
-            priority INTEGER DEFAULT 1,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        """
-        connection.execute(text(create_feed_table_sql))
-        print("✅ Table 'feed_items' vérifiée/créée.")
+def column_exists(connection, table_name, column_name):
+    """Vérifie si une colonne existe dans une table"""
+    inspector = inspect(engine)
+    columns = [col['name'] for col in inspector.get_columns(table_name)]
+    return column_name in columns
 
-        trans.commit()
-        print("🎉 Migration terminée avec succès ! Tes tables sont à jour Coach.")
-        
-    except Exception as e:
-        trans.rollback()
-        print(f"❌ Erreur lors de la migration : {e}")-e 
+def apply_migration():
+    """Applique toutes les migrations nécessaires"""
+    with engine.connect() as connection:
+        trans = connection.begin()
+        try:
+            logger.info("🛠️ Début des migrations...")
+            
+            # 1. CRÉATION DES TABLES DE BASE (si elles n'existent pas)
+            
+            # Table users
+            if not table_exists(connection, "users"):
+                logger.info("Création de la table 'users'...")
+                connection.execute(text("""
+                    CREATE TABLE users (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR UNIQUE NOT NULL,
+                        email VARCHAR UNIQUE,
+                        hashed_password VARCHAR NOT NULL,
+                        profile_data TEXT,
+                        strategy_data TEXT,
+                        weekly_plan_data TEXT,
+                        draft_workout_data TEXT
+                    );
+                """))
+                logger.info("✅ Table 'users' créée.")
+            
+            # Table workout_sessions
+            if not table_exists(connection, "workout_sessions"):
+                logger.info("Création de la table 'workout_sessions'...")
+                connection.execute(text("""
+                    CREATE TABLE workout_sessions (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                        date DATE NOT NULL,
+                        duration FLOAT NOT NULL,
+                        rpe FLOAT NOT NULL,
+                        energy_level INTEGER DEFAULT 5,
+                        notes TEXT,
+                        ai_analysis TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                logger.info("✅ Table 'workout_sessions' créée.")
+            
+            # Table workout_sets
+            if not table_exists(connection, "workout_sets"):
+                logger.info("Création de la table 'workout_sets'...")
+                connection.execute(text("""
+                    CREATE TABLE workout_sets (
+                        id SERIAL PRIMARY KEY,
+                        session_id INTEGER REFERENCES workout_sessions(id) ON DELETE CASCADE,
+                        exercise_name VARCHAR NOT NULL,
+                        set_order INTEGER NOT NULL,
+                        weight FLOAT DEFAULT 0.0,
+                        reps FLOAT DEFAULT 0.0,
+                        rpe FLOAT DEFAULT 0.0,
+                        rest_seconds INTEGER DEFAULT 0,
+                        metric_type VARCHAR DEFAULT 'LOAD_REPS'
+                    );
+                """))
+                logger.info("✅ Table 'workout_sets' créée.")
+            
+            # Table feed_items
+            if not table_exists(connection, "feed_items"):
+                logger.info("Création de la table 'feed_items'...")
+                connection.execute(text("""
+                    CREATE TABLE feed_items (
+                        id VARCHAR PRIMARY KEY,
+                        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                        type VARCHAR NOT NULL,
+                        title VARCHAR NOT NULL,
+                        message VARCHAR NOT NULL,
+                        action_payload TEXT,
+                        is_read BOOLEAN DEFAULT FALSE,
+                        is_completed BOOLEAN DEFAULT FALSE,
+                        priority INTEGER DEFAULT 1,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                logger.info("✅ Table 'feed_items' créée.")
+            
+            # 2. MIGRATIONS POUR LES COLONNES MANQUANTES (si tables existent)
+            
+            # Migration pour users
+            if table_exists(connection, "users"):
+                migrations_users = [
+                    ("profile_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"),
+                    ("strategy_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"),
+                    ("weekly_plan_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"),
+                    ("draft_workout_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"),
+                ]
+                
+                for col_name, sql in migrations_users:
+                    if not column_exists(connection, "users", col_name):
+                        logger.info(f"Ajout de la colonne '{col_name}' à la table 'users'...")
+                        connection.execute(text(sql))
+                        logger.info(f"✅ Colonne '{col_name}' ajoutée.")
+            
+            # Migration pour workout_sessions
+            if table_exists(connection, "workout_sessions"):
+                migrations_sessions = [
+                    ("energy_level", "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"),
+                    ("notes", "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"),
+                    ("created_at", "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"),
+                    ("ai_analysis", "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS ai_analysis TEXT;"),  # <-- LA COLONNE MANQUANTE
+                ]
+                
+                for col_name, sql in migrations_sessions:
+                    if not column_exists(connection, "workout_sessions", col_name):
+                        logger.info(f"Ajout de la colonne '{col_name}' à la table 'workout_sessions'...")
+                        connection.execute(text(sql))
+                        logger.info(f"✅ Colonne '{col_name}' ajoutée.")
+            
+            # Migration pour workout_sets
+            if table_exists(connection, "workout_sets"):
+                migrations_sets = [
+                    ("metric_type", "ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"),
+                    ("rest_seconds", "ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"),
+                ]
+                
+                for col_name, sql in migrations_sets:
+                    if not column_exists(connection, "workout_sets", col_name):
+                        logger.info(f"Ajout de la colonne '{col_name}' à la table 'workout_sets'...")
+                        connection.execute(text(sql))
+                        logger.info(f"✅ Colonne '{col_name}' ajoutée.")
+            
+            # 3. CRÉATION DES INDEX POUR LES PERFORMANCES
+            logger.info("Création des index...")
+            indexes = [
+                "CREATE INDEX IF NOT EXISTS idx_workout_sessions_user_id ON workout_sessions(user_id);",
+                "CREATE INDEX IF NOT EXISTS idx_workout_sessions_date ON workout_sessions(date);",
+                "CREATE INDEX IF NOT EXISTS idx_workout_sets_session_id ON workout_sets(session_id);",
+                "CREATE INDEX IF NOT EXISTS idx_feed_items_user_id ON feed_items(user_id);",
+                "CREATE INDEX IF NOT EXISTS idx_feed_items_created_at ON feed_items(created_at);",
+                "CREATE INDEX IF NOT EXISTS idx_feed_items_type ON feed_items(type);",
+            ]
+            
+            for idx_sql in indexes:
+                try:
+                    connection.execute(text(idx_sql))
+                except Exception as e:
+                    logger.warning(f"⚠️ Impossible de créer l'index: {e}")
+            
+            trans.commit()
+            logger.info("🎉 Toutes les migrations ont été appliquées avec succès !")
+            
+            # 4. VÉRIFICATION FINALE
+            logger.info("🔍 Vérification finale des colonnes...")
+            check_tables = ["users", "workout_sessions", "workout_sets", "feed_items"]
+            
+            for table in check_tables:
+                if table_exists(connection, table):
+                    inspector = inspect(engine)
+                    columns = inspector.get_columns(table)
+                    logger.info(f"Table '{table}' a {len(columns)} colonnes:")
+                    for col in columns:
+                        logger.info(f"  - {col['name']} ({col['type']})")
+            
+            return True
+            
+        except Exception as e:
+            trans.rollback()
+            logger.error(f"❌ Erreur lors de la migration : {str(e)}")
+            return False
+
+if __name__ == "__main__":
+    logger.info("🚀 Lancement du script de migration de la base de données...")
+    
+    success = apply_migration()
+    
+    if success:
+        logger.info("✅ Migration terminée avec succès !")
+        sys.exit(0)
+    else:
+        logger.error("❌ La migration a échoué.")
+        sys.exit(1)-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/remove_cache_decorator.py
+================================================================================
+import re
+
+with open('app/routers/coach.py', 'r') as f:
+    content = f.read()
+
+# Supprimer toutes les occurrences de @cached_response
+new_content = re.sub(r'@cached_response\([^)]*\)\s*\n', '', content)
+
+with open('app/routers/coach.py', 'w') as f:
+    f.write(new_content)
+
+print("✅ Tous les décorateurs @cached_response retirés")
+-e 
 
 -e 
 ================================================================================
