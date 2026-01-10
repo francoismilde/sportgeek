@@ -5,8 +5,18 @@ import logging
 from sqlalchemy import text 
 
 # --- IMPORTS DES ROUTEURS ---
-# [MODIFICATION] Ajout de 'feed'
-from .routers import performance, safety, auth, workouts, coach, user, feed, profiles, athlete_profiles, coach_memories
+from .routers import (
+    performance, 
+    safety, 
+    auth, 
+    workouts, 
+    coach, 
+    user, 
+    feed, 
+    profiles, 
+    athlete_profiles, 
+    coach_memories
+)
 from app.core.database import engine, Base
 
 # Configuration des logs
@@ -24,7 +34,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="2.0.0", # Neural Feed v2 - AthleteProfile version="1.9.4", # Bump Neural Feed CoachMemory
+    version="2.1.0", # Bump version pour Migration V2
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -59,57 +69,95 @@ app.include_router(performance.router)
 app.include_router(safety.router)
 app.include_router(coach.router)
 app.include_router(user.router)
-# [MODIFICATION] Activation du Feed
 app.include_router(feed.router)
 app.include_router(profiles.router)
 app.include_router(athlete_profiles.router)
 app.include_router(coach_memories.router)
 
-# --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V4) ---
+# --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V5 - MIGRATION COMPLETE) ---
 @app.get("/fix_db", tags=["System"])
 def fix_database_schema():
     """
-    🛠️ ROUTE D'URGENCE V4 : Ajoute TOUTES les colonnes manquantes.
-    Inclus maintenant draft_workout_data pour réparer le crash Login.
+    🛠️ ROUTE D'URGENCE V5 : Création des tables V2 + Patch des colonnes.
+    Lancez cette URL pour mettre à jour la BDD sur Render.
     """
     try:
         with engine.connect() as connection:
             trans = connection.begin()
             
-            # 1. Table WORKOUT_SESSIONS (Séances)
+            # 1. CRÉATION DES TABLES V2 (Si elles n'existent pas)
+            
+            # Table Profil Athlète
+            connection.execute(text("""
+                CREATE TABLE IF NOT EXISTS athlete_profiles (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+                    basic_info JSON DEFAULT '{}',
+                    physical_metrics JSON DEFAULT '{}',
+                    sport_context JSON DEFAULT '{}',
+                    performance_baseline JSON DEFAULT '{}',
+                    injury_prevention JSON DEFAULT '{}',
+                    training_preferences JSON DEFAULT '{}',
+                    goals JSON DEFAULT '{}',
+                    constraints JSON DEFAULT '{}',
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """))
+            
+            # Table Mémoire Coach
+            connection.execute(text("""
+                CREATE TABLE IF NOT EXISTS coach_memories (
+                    id SERIAL PRIMARY KEY,
+                    athlete_profile_id INTEGER UNIQUE REFERENCES athlete_profiles(id) ON DELETE CASCADE,
+                    metadata_info JSON DEFAULT '{}',
+                    current_context JSON DEFAULT '{}',
+                    response_patterns JSON DEFAULT '{}',
+                    performance_baselines JSON DEFAULT '{}',
+                    adaptation_signals JSON DEFAULT '{}',
+                    sport_specific_insights JSON DEFAULT '{}',
+                    training_history_summary JSON DEFAULT '{}',
+                    athlete_preferences JSON DEFAULT '{}',
+                    coach_notes JSON DEFAULT '{}',
+                    memory_flags JSON DEFAULT '{}',
+                    last_updated TIMESTAMPTZ DEFAULT NOW()
+                );
+            """))
+
+            # 2. PATCH DES TABLES EXISTANTES (Colonnes manquantes)
+            
+            # Table USERS
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR UNIQUE;"))
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"))
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
+            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"))
+
+            # Table WORKOUT_SESSIONS
             connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"))
             connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"))
             connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"))
+            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS ai_analysis TEXT;"))
             
-            # 2. Table WORKOUT_SETS (Séries)
+            # Table WORKOUT_SETS
             connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
             connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"))
-            
-            # 3. Table USERS (Profil)
-            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
-            
-            # Mémoire IA
-            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"))
-            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
-            
-            # [FIX CRITIQUE] Ajout du brouillon
-            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"))
             
             trans.commit()
             return {
                 "status": "SUCCESS", 
-                "message": "✅ Base de données réparée : Colonne 'draft_workout_data' ajoutée !"
+                "message": "✅ Base de données migrée : Tables 'athlete_profiles' et 'coach_memories' créées + Colonnes ajoutées !"
             }
             
     except Exception as e:
-        return {"status": "ERROR", "message": f"❌ Erreur lors de la réparation : {str(e)}"}
+        return {"status": "ERROR", "message": f"❌ Erreur lors de la migration : {str(e)}"}
 
 
 @app.get("/health", tags=["Health Check"])
 async def health_check():
     return {
         "status": "active",
-        "version": "1.9.4",
+        "version": "2.1.0",
         "service": "TitanFlow Backend",
         "database": "connected"
     }
