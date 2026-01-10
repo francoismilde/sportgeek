@@ -62,7 +62,7 @@ class AthleteProfileResponse(AthleteProfileBase):
 # --- MEMORY SCHEMAS ---
 class CoachMemoryResponse(BaseModel):
     id: int
-    readiness_score: int = Field(alias="current_context", default={}).get("readiness_score", 0)
+    readiness_score: int = Field(alias="current_context", default=50)
     current_phase: str = "Général"
     flags: Dict[str, bool] = {}
     insights: Dict[str, Any] = {}
