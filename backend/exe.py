@@ -1,52 +1,58 @@
 import os
 
-# Liste des fichiers qui utilisent ce service et doivent être corrigés
-files_to_fix = [
-    os.path.join("backend", "app", "routers", "athlete_profiles.py"),
-    os.path.join("backend", "app", "routers", "coach_memories.py"),
-    os.path.join("app", "routers", "athlete_profiles.py"),
-    os.path.join("app", "routers", "coach_memories.py")
+# Liste des chemins possibles pour schemas.py
+possible_paths = [
+    os.path.join("backend", "app", "models", "schemas.py"),
+    os.path.join("app", "models", "schemas.py"),
+    "schemas.py"
 ]
 
-# Le mauvais import (celui qui plante)
-bad_import = "from app.services.coach_memory_service import"
+target_file = None
+for path in possible_paths:
+    if os.path.exists(path):
+        target_file = path
+        break
 
-# Le bon import (celui qui correspond à votre structure de fichiers)
-good_import = "from app.services.coach_memory.service import"
+if not target_file:
+    print("❌ Impossible de trouver schemas.py")
+    exit(1)
 
-print("🔧 Réparation des imports de services...")
+print(f"🔧 Ajout des schémas manquants dans : {target_file}")
 
-fixed_count = 0
+# Les schémas à ajouter
+missing_code = """
+# --- MISSING SCHEMAS FOR UPDATES ---
 
-for file_path in files_to_fix:
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            
-            if bad_import in content:
-                print(f"⚠️  Erreur trouvée dans : {file_path}")
-                
-                # Remplacement
-                new_content = content.replace(bad_import, good_import)
-                
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(new_content)
-                    
-                print(f"✅  Corrigé : {file_path}")
-                fixed_count += 1
-            else:
-                print(f"ℹ️  Fichier sain ou introuvable : {file_path}")
-                
-        except Exception as e:
-            print(f"❌ Erreur lecture {file_path}: {e}")
+class AthleteProfileUpdate(AthleteProfileBase):
+    pass
 
-if fixed_count > 0:
-    print(f"\n🎉 Terminé ! {fixed_count} fichiers ont été réparés.")
+class ProfileSectionUpdate(BaseModel):
+    section_data: Dict[str, Any]
+
+class DailyMetrics(BaseModel):
+    date: str
+    weight: Optional[float] = None
+    sleep_quality: Optional[int] = None
+    resting_heart_rate: Optional[int] = None
+    hrv: Optional[int] = None
+    energy_level: Optional[int] = None
+    muscle_soreness: Optional[int] = None
+    perceived_stress: Optional[int] = None
+    sleep_duration: Optional[float] = None
+
+class GoalProgressUpdate(BaseModel):
+    progress_value: int
+    progress_note: Optional[str] = None
+    achieved: bool = False
+"""
+
+with open(target_file, "r", encoding="utf-8") as f:
+    content = f.read()
+
+# On vérifie si AthleteProfileUpdate existe déjà pour éviter les doublons
+if "class AthleteProfileUpdate" not in content:
+    with open(target_file, "a", encoding="utf-8") as f:
+        f.write("\n" + missing_code)
+    print("✅ Schémas ajoutés avec succès (AthleteProfileUpdate, DailyMetrics, etc.)")
 else:
-    print("\n🤔 Aucune erreur trouvée. Vérifiez que vous êtes à la racine du projet.")
-    # Fallback : Si le fichier service.py est mal placé, on peut créer un alias
-    service_path = os.path.join("backend", "app", "services", "coach_memory", "service.py")
-    if os.path.exists(service_path):
-        print(f"ℹ️  Le service existe bien ici : {service_path}")
-        print("    L'import correct est : from app.services.coach_memory.service import ...")
+    print("ℹ️ Les schémas semblent déjà présents.")
