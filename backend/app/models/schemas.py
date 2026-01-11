@@ -5,6 +5,7 @@ from enum import Enum
 import json
 
 # --- ENUMS & TYPES ---
+
 class SportType(str, Enum):
     RUGBY = "Rugby"
     FOOTBALL = "Football"
@@ -14,11 +15,13 @@ class SportType(str, Enum):
     OTHER = "Autre"
 
 # --- SUB-SCHEMAS FOR PROFILE ---
+
 class BasicInfo(BaseModel):
     pseudo: Optional[str] = None
     email: Optional[str] = None
     birth_date: Optional[str] = None
     training_age: Optional[int] = 0
+    biological_sex: Optional[str] = "Homme"
 
 class PhysicalMetrics(BaseModel):
     height: float = 0
@@ -39,6 +42,7 @@ class TrainingPreferences(BaseModel):
     preferred_split: str = "Upper/Lower"
 
 # --- MAIN PROFILE SCHEMAS ---
+
 class AthleteProfileBase(BaseModel):
     basic_info: BasicInfo = Field(default_factory=BasicInfo)
     physical_metrics: PhysicalMetrics = Field(default_factory=PhysicalMetrics)
@@ -52,30 +56,41 @@ class AthleteProfileBase(BaseModel):
 class AthleteProfileCreate(AthleteProfileBase):
     pass
 
+class AthleteProfileUpdate(AthleteProfileBase):
+    # Tout est optionnel pour permettre des mises à jour partielles
+    basic_info: Optional[BasicInfo] = None
+    physical_metrics: Optional[PhysicalMetrics] = None
+    sport_context: Optional[SportContext] = None
+    training_preferences: Optional[TrainingPreferences] = None
+
 class AthleteProfileResponse(AthleteProfileBase):
     id: int
     user_id: int
-    created_at: datetime
+    created_at: Optional[datetime] = None
+    
     class Config:
         from_attributes = True
 
 # --- MEMORY SCHEMAS ---
+
 class CoachMemoryResponse(BaseModel):
     id: int
-    readiness_score: int = Field(alias="current_context", default=50)
+    readiness_score: int = Field(alias="current_context", default={}).get("readiness_score", 0)
     current_phase: str = "Général"
     flags: Dict[str, bool] = {}
     insights: Dict[str, Any] = {}
     
     @field_validator('readiness_score', mode='before')
     def extract_readiness(cls, v):
-        if isinstance(v, dict): return v.get('readiness_score', 50)
+        if isinstance(v, dict):
+            return v.get('readiness_score', 50)
         return v
 
     class Config:
         from_attributes = True
 
-# --- LEGACY SCHEMAS ---
+# --- LEGACY SCHEMAS (WORKOUTS) ---
+
 class WorkoutSetBase(BaseModel):
     exercise_name: str
     set_order: int
@@ -131,6 +146,8 @@ class WorkoutSessionResponse(WorkoutSessionCreate):
     class Config:
         from_attributes = True
 
+# --- AI & GENERATION ---
+
 class GenerateWorkoutRequest(BaseModel):
     profile_data: Dict[str, Any]
     context: Dict[str, Any]
@@ -153,6 +170,8 @@ class AIWorkoutPlan(BaseModel):
     exercises: List[AIExercise]
     cooldown: List[str]
 
+# --- USER & AUTH ---
+
 class UserCreate(BaseModel):
     username: str
     email: Optional[str] = None
@@ -172,6 +191,8 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+# --- FEED ---
 
 class FeedItemType(str, Enum):
     INFO = "INFO"
@@ -201,7 +222,8 @@ class FeedItemResponse(FeedItemCreate):
     class Config:
         from_attributes = True
 
-# --- PERFORMANCE ---
+# --- PERFORMANCE & MISC ---
+
 class OneRepMaxRequest(BaseModel):
     weight: float
     reps: int
@@ -227,16 +249,8 @@ class WeeklyPlanResponse(BaseModel):
     reasoning: str
 class UserProfileUpdate(BaseModel):
     profile_data: Dict[str, Any]
-
-
-# --- AUTO-INJECTED UPDATE SCHEMAS ---
-
-class AthleteProfileUpdate(AthleteProfileBase):
-    pass
-
 class ProfileSectionUpdate(BaseModel):
     section_data: Dict[str, Any]
-
 class DailyMetrics(BaseModel):
     date: str
     weight: Optional[float] = None
@@ -247,7 +261,6 @@ class DailyMetrics(BaseModel):
     muscle_soreness: Optional[int] = None
     perceived_stress: Optional[int] = None
     sleep_duration: Optional[float] = None
-
 class GoalProgressUpdate(BaseModel):
     progress_value: int
     progress_note: Optional[str] = None
