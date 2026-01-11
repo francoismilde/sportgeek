@@ -53,6 +53,30 @@ class AthleteProfileBase(BaseModel):
     injury_prevention: Dict[str, Any] = {}
     performance_baseline: Dict[str, Any] = {}
 
+    # ✅ VALIDATEUR UNIVERSEL : Transforme les strings JSON en Dicts automatiquement
+    # Ce validateur intercepte les données brutes AVANT que Pydantic ne tente de valider les types.
+    @field_validator(
+        'basic_info', 
+        'physical_metrics', 
+        'sport_context', 
+        'training_preferences', 
+        'goals', 
+        'constraints', 
+        'injury_prevention', 
+        'performance_baseline',
+        mode='before'
+    )
+    def parse_json_strings(cls, v):
+        # Si la valeur est une string non vide, on tente de la parser
+        if isinstance(v, str) and v.strip():
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                # Si le JSON est malformé, on renvoie un dict vide pour éviter le crash violent
+                return {} 
+        # Si c'est déjà un dict ou autre, on laisse passer
+        return v
+
 class AthleteProfileCreate(AthleteProfileBase):
     pass
 
