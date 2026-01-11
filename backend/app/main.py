@@ -40,13 +40,21 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configuration CORS
+# --- CONFIGURATION CORS (Correctif) ---
+# On définit explicitement les origines autorisées + le joker pour le Cloud
+origins = [
+    "http://localhost",
+    "http://localhost:8000",
+    "http://localhost:3000",
+    "*", # Autorise toutes les origines (Vital pour Cloud Workstations en dev)
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"], # Autorise toutes les méthodes (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"], # Autorise tous les headers
 )
 
 # --- GLOBAL EXCEPTION HANDLER ---

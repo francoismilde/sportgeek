@@ -895,11 +895,22 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-from sqlalchemy import text 
+from sqlalchemy import text, inspect
+from datetime import datetime
 
 # --- IMPORTS DES ROUTEURS ---
-# [MODIFICATION] Ajout de 'feed'
-from .routers import performance, safety, auth, workouts, coach, user, feed, profiles, athlete_profiles, coach_memories
+from .routers import (
+    performance, 
+    safety, 
+    auth, 
+    workouts, 
+    coach, 
+    user, 
+    feed, 
+    profiles, 
+    athlete_profiles, 
+    coach_memories
+)
 from app.core.database import engine, Base
 
 # Configuration des logs
@@ -917,7 +928,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="2.0.0", # Neural Feed v2 - AthleteProfile version="1.9.4", # Bump Neural Feed CoachMemory
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -931,18 +942,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- GLOBAL EXCEPTION HANDLER (ANTI-CRASH) ---
+# --- GLOBAL EXCEPTION HANDLER ---
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"🔥 CRASH GLOBAL NON GÉRÉ : {str(exc)}")
     return JSONResponse(
         status_code=500,
         content={"detail": f"Erreur serveur interne (TitanFlow Panic): {str(exc)}"},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "*",
-            "Access-Control-Allow-Headers": "*",
-        },
     )
 
 # --- ROUTEURS ---
@@ -952,60 +958,278 @@ app.include_router(performance.router)
 app.include_router(safety.router)
 app.include_router(coach.router)
 app.include_router(user.router)
-# [MODIFICATION] Activation du Feed
 app.include_router(feed.router)
 app.include_router(profiles.router)
 app.include_router(athlete_profiles.router)
 app.include_router(coach_memories.router)
 
-# --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V4) ---
-@app.get("/fix_db", tags=["System"])
-def fix_database_schema():
-    """
-    🛠️ ROUTE D'URGENCE V4 : Ajoute TOUTES les colonnes manquantes.
-    Inclus maintenant draft_workout_data pour réparer le crash Login.
-    """
-    try:
-        with engine.connect() as connection:
-            trans = connection.begin()
-            
-            # 1. Table WORKOUT_SESSIONS (Séances)
-            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"))
-            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"))
-            connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"))
-            
-            # 2. Table WORKOUT_SETS (Séries)
-            connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
-            connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"))
-            
-            # 3. Table USERS (Profil)
-            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"))
-            
-            # Mémoire IA
-            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"))
-            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
-            
-            # [FIX CRITIQUE] Ajout du brouillon
-            connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"))
-            
-            trans.commit()
-            return {
-                "status": "SUCCESS", 
-                "message": "✅ Base de données réparée : Colonne 'draft_workout_data' ajoutée !"
-            }
-            
-    except Exception as e:
-        return {"status": "ERROR", "message": f"❌ Erreur lors de la réparation : {str(e)}"}
+# --- ROUTES SYSTÈME ---
 
-
-@app.get("/health", tags=["Health Check"])
+@app.get("/health", tags=["System"])
 async def health_check():
     return {
         "status": "active",
-        "version": "1.9.4",
+        "version": "2.1.0",
         "service": "TitanFlow Backend",
         "database": "connected"
     }
+
+@app.get("/db_status", tags=["System"])
+async def database_status():
+    """
+    📊 Diagnostic complet de la base de données
+    """
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        
+        table_status = {}
+        for table in ['users', 'workout_sessions', 'workout_sets', 'feed_items', 
+                     'athlete_profiles', 'coach_memories']:
+            if table in tables:
+                columns = inspector.get_columns(table)
+                table_status[table] = {
+                    "status": "✅ EXISTE",
+                    "column_count": len(columns),
+                    "columns": [col['name'] for col in columns[:10]]
+                }
+            else:
+                table_status[table] = {"status": "❌ MANQUANTE"}
+        
+        # Compter les données
+        with engine.connect() as conn:
+            data_counts = {}
+            for table in tables:
+                try:
+                    result = conn.execute(text(f"SELECT COUNT(*) FROM {table}")).fetchone()
+                    data_counts[table] = result[0] if result else 0
+                except:
+                    data_counts[table] = "ERROR"
+        
+        return {
+            "status": "success",
+            "total_tables": len(tables),
+            "tables_found": tables,
+            "table_status": table_status,
+            "data_counts": data_counts,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/fix_db", tags=["System"])
+async def fix_database_schema():
+    """
+    🛠️ MIGRATION COMPLÈTE V7 : Crée toutes les tables manquantes
+    """
+    try:
+        operations = []
+        
+        with engine.connect() as connection:
+            # Commencer une transaction
+            trans = connection.begin()
+            
+            try:
+                # 1. CRÉATION DE LA TABLE users SI ELLE N'EXISTE PAS
+                # (nécessaire pour les clés étrangères)
+                connection.execute(text("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR UNIQUE,
+                        email VARCHAR UNIQUE,
+                        hashed_password VARCHAR,
+                        profile_data TEXT,
+                        strategy_data TEXT,
+                        weekly_plan_data TEXT,
+                        draft_workout_data TEXT
+                    );
+                """))
+                operations.append("✅ Table 'users' vérifiée/créée")
+                
+                # 2. CRÉATION DE workout_sessions
+                connection.execute(text("""
+                    CREATE TABLE IF NOT EXISTS workout_sessions (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER REFERENCES users(id),
+                        date DATE,
+                        duration FLOAT,
+                        rpe FLOAT,
+                        energy_level INTEGER DEFAULT 5,
+                        notes TEXT,
+                        ai_analysis TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                operations.append("✅ Table 'workout_sessions' vérifiée/créée")
+                
+                # 3. CRÉATION DE workout_sets
+                connection.execute(text("""
+                    CREATE TABLE IF NOT EXISTS workout_sets (
+                        id SERIAL PRIMARY KEY,
+                        session_id INTEGER REFERENCES workout_sessions(id),
+                        exercise_name VARCHAR,
+                        set_order INTEGER,
+                        weight FLOAT DEFAULT 0.0,
+                        reps FLOAT DEFAULT 0.0,
+                        rpe FLOAT DEFAULT 0.0,
+                        rest_seconds INTEGER DEFAULT 0,
+                        metric_type VARCHAR DEFAULT 'LOAD_REPS'
+                    );
+                """))
+                operations.append("✅ Table 'workout_sets' vérifiée/créée")
+                
+                # 4. CRÉATION DE athlete_profiles
+                connection.execute(text("""
+                    CREATE TABLE IF NOT EXISTS athlete_profiles (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+                        basic_info JSON DEFAULT '{}',
+                        physical_metrics JSON DEFAULT '{}',
+                        sport_context JSON DEFAULT '{}',
+                        performance_baseline JSON DEFAULT '{}',
+                        injury_prevention JSON DEFAULT '{}',
+                        training_preferences JSON DEFAULT '{}',
+                        goals JSON DEFAULT '{}',
+                        constraints JSON DEFAULT '{}',
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                operations.append("✅ Table 'athlete_profiles' vérifiée/créée")
+                
+                # 5. CRÉATION DE coach_memories
+                connection.execute(text("""
+                    CREATE TABLE IF NOT EXISTS coach_memories (
+                        id SERIAL PRIMARY KEY,
+                        athlete_profile_id INTEGER UNIQUE REFERENCES athlete_profiles(id) ON DELETE CASCADE,
+                        metadata_info JSON DEFAULT '{}',
+                        current_context JSON DEFAULT '{}',
+                        response_patterns JSON DEFAULT '{}',
+                        performance_baselines JSON DEFAULT '{}',
+                        adaptation_signals JSON DEFAULT '{}',
+                        sport_specific_insights JSON DEFAULT '{}',
+                        training_history_summary JSON DEFAULT '{}',
+                        athlete_preferences JSON DEFAULT '{}',
+                        coach_notes JSON DEFAULT '{}',
+                        memory_flags JSON DEFAULT '{}',
+                        last_updated TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                operations.append("✅ Table 'coach_memories' vérifiée/créée")
+                
+                # 6. CRÉATION DE feed_items (CRITIQUE !)
+                connection.execute(text("""
+                    CREATE TABLE IF NOT EXISTS feed_items (
+                        id VARCHAR PRIMARY KEY,
+                        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                        type VARCHAR NOT NULL,
+                        title VARCHAR NOT NULL,
+                        message VARCHAR NOT NULL,
+                        action_payload TEXT,
+                        is_read BOOLEAN DEFAULT FALSE,
+                        is_completed BOOLEAN DEFAULT FALSE,
+                        priority INTEGER DEFAULT 1,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """))
+                operations.append("✅ Table 'feed_items' vérifiée/créée")
+                
+                # 7. AJOUT DES COLONNES MANQUANTES (sans erreur si existent déjà)
+                
+                # Colonnes users
+                user_columns = [
+                    ("email", "VARCHAR UNIQUE"),
+                    ("profile_data", "TEXT"),
+                    ("strategy_data", "TEXT"),
+                    ("weekly_plan_data", "TEXT"),
+                    ("draft_workout_data", "TEXT")
+                ]
+                
+                for col_name, col_type in user_columns:
+                    try:
+                        connection.execute(text(f"""
+                            ALTER TABLE users 
+                            ADD COLUMN IF NOT EXISTS {col_name} {col_type};
+                        """))
+                        operations.append(f"✅ Colonne 'users.{col_name}' vérifiée/ajoutée")
+                    except Exception as e:
+                        operations.append(f"⚠️  users.{col_name}: {str(e)[:50]}")
+                
+                # Colonnes workout_sessions
+                workout_cols = [
+                    ("energy_level", "INTEGER DEFAULT 5"),
+                    ("notes", "TEXT"),
+                    ("ai_analysis", "TEXT"),
+                    ("created_at", "TIMESTAMPTZ DEFAULT NOW()")
+                ]
+                
+                for col_name, col_type in workout_cols:
+                    try:
+                        connection.execute(text(f"""
+                            ALTER TABLE workout_sessions 
+                            ADD COLUMN IF NOT EXISTS {col_name} {col_type};
+                        """))
+                        operations.append(f"✅ Colonne 'workout_sessions.{col_name}' vérifiée/ajoutée")
+                    except Exception as e:
+                        operations.append(f"⚠️  workout_sessions.{col_name}: {str(e)[:50]}")
+                
+                # Colonnes workout_sets
+                sets_cols = [
+                    ("rest_seconds", "INTEGER DEFAULT 0"),
+                    ("metric_type", "VARCHAR DEFAULT 'LOAD_REPS'")
+                ]
+                
+                for col_name, col_type in sets_cols:
+                    try:
+                        connection.execute(text(f"""
+                            ALTER TABLE workout_sets 
+                            ADD COLUMN IF NOT EXISTS {col_name} {col_type};
+                        """))
+                        operations.append(f"✅ Colonne 'workout_sets.{col_name}' vérifiée/ajoutée")
+                    except Exception as e:
+                        operations.append(f"⚠️  workout_sets.{col_name}: {str(e)[:50]}")
+                
+                # Valider la transaction
+                trans.commit()
+                
+                # VÉRIFICATION FINALE
+                inspector = inspect(engine)
+                tables_after = inspector.get_table_names()
+                
+                # Compter les tables critiques
+                critical_tables = ['feed_items', 'athlete_profiles', 'coach_memories']
+                missing_tables = [t for t in critical_tables if t not in tables_after]
+                
+                if missing_tables:
+                    return {
+                        "status": "PARTIAL",
+                        "message": "⚠️ Certaines tables sont toujours manquantes",
+                        "operations": operations,
+                        "missing_tables": missing_tables,
+                        "tables_found": tables_after
+                    }
+                else:
+                    return {
+                        "status": "SUCCESS",
+                        "message": "🎉 Migration complète réussie !",
+                        "operations": operations,
+                        "total_tables": len(tables_after),
+                        "critical_tables_present": critical_tables,
+                        "next_step": "Accédez à /db_status pour vérifier"
+                    }
+                    
+            except Exception as e:
+                trans.rollback()
+                raise e
+                
+    except Exception as e:
+        return {
+            "status": "ERROR",
+            "message": f"❌ Échec de la migration: {str(e)}",
+            "error_type": type(e).__name__,
+            "suggestion": "Vérifiez les logs et les permissions de la base de données"
+        }
 
 if __name__ == "__main__":
     import uvicorn
@@ -1028,6 +1252,7 @@ from enum import Enum
 import json
 
 # --- ENUMS & TYPES ---
+
 class SportType(str, Enum):
     RUGBY = "Rugby"
     FOOTBALL = "Football"
@@ -1037,11 +1262,13 @@ class SportType(str, Enum):
     OTHER = "Autre"
 
 # --- SUB-SCHEMAS FOR PROFILE ---
+
 class BasicInfo(BaseModel):
     pseudo: Optional[str] = None
     email: Optional[str] = None
     birth_date: Optional[str] = None
     training_age: Optional[int] = 0
+    biological_sex: Optional[str] = "Homme"
 
 class PhysicalMetrics(BaseModel):
     height: float = 0
@@ -1062,6 +1289,7 @@ class TrainingPreferences(BaseModel):
     preferred_split: str = "Upper/Lower"
 
 # --- MAIN PROFILE SCHEMAS ---
+
 class AthleteProfileBase(BaseModel):
     basic_info: BasicInfo = Field(default_factory=BasicInfo)
     physical_metrics: PhysicalMetrics = Field(default_factory=PhysicalMetrics)
@@ -1075,14 +1303,22 @@ class AthleteProfileBase(BaseModel):
 class AthleteProfileCreate(AthleteProfileBase):
     pass
 
+class AthleteProfileUpdate(AthleteProfileBase):
+    basic_info: Optional[BasicInfo] = None
+    physical_metrics: Optional[PhysicalMetrics] = None
+    sport_context: Optional[SportContext] = None
+    training_preferences: Optional[TrainingPreferences] = None
+
 class AthleteProfileResponse(AthleteProfileBase):
     id: int
     user_id: int
-    created_at: datetime
+    created_at: Optional[datetime] = None
+    
     class Config:
         from_attributes = True
 
 # --- MEMORY SCHEMAS ---
+
 class CoachMemoryResponse(BaseModel):
     id: int
     readiness_score: int = Field(alias="current_context", default=50)
@@ -1092,13 +1328,15 @@ class CoachMemoryResponse(BaseModel):
     
     @field_validator('readiness_score', mode='before')
     def extract_readiness(cls, v):
-        if isinstance(v, dict): return v.get('readiness_score', 50)
+        if isinstance(v, dict):
+            return v.get('readiness_score', 50)
         return v
 
     class Config:
         from_attributes = True
 
-# --- LEGACY SCHEMAS ---
+# --- WORKOUT SCHEMAS (UPDATED FOR BE-03) ---
+
 class WorkoutSetBase(BaseModel):
     exercise_name: str
     set_order: int
@@ -1138,6 +1376,7 @@ class WorkoutSessionCreate(BaseModel):
     rpe: float
     energy_level: int = 5
     notes: Optional[str] = None
+    ai_analysis: Optional[str] = None # Added for BE-03
     sets: List[WorkoutSetCreate] = []
 
 class WorkoutSetResponse(WorkoutSetBase):
@@ -1153,6 +1392,8 @@ class WorkoutSessionResponse(WorkoutSessionCreate):
     sets: List[WorkoutSetResponse] = []
     class Config:
         from_attributes = True
+
+# --- AI & GENERATION ---
 
 class GenerateWorkoutRequest(BaseModel):
     profile_data: Dict[str, Any]
@@ -1176,6 +1417,8 @@ class AIWorkoutPlan(BaseModel):
     exercises: List[AIExercise]
     cooldown: List[str]
 
+# --- USER & AUTH ---
+
 class UserCreate(BaseModel):
     username: str
     email: Optional[str] = None
@@ -1195,6 +1438,8 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+# --- FEED ---
 
 class FeedItemType(str, Enum):
     INFO = "INFO"
@@ -1224,7 +1469,8 @@ class FeedItemResponse(FeedItemCreate):
     class Config:
         from_attributes = True
 
-# --- PERFORMANCE ---
+# --- PERFORMANCE & MISC ---
+
 class OneRepMaxRequest(BaseModel):
     weight: float
     reps: int
@@ -1250,16 +1496,8 @@ class WeeklyPlanResponse(BaseModel):
     reasoning: str
 class UserProfileUpdate(BaseModel):
     profile_data: Dict[str, Any]
-
-
-# --- AUTO-INJECTED UPDATE SCHEMAS ---
-
-class AthleteProfileUpdate(AthleteProfileBase):
-    pass
-
 class ProfileSectionUpdate(BaseModel):
     section_data: Dict[str, Any]
-
 class DailyMetrics(BaseModel):
     date: str
     weight: Optional[float] = None
@@ -1270,12 +1508,10 @@ class DailyMetrics(BaseModel):
     muscle_soreness: Optional[int] = None
     perceived_stress: Optional[int] = None
     sleep_duration: Optional[float] = None
-
 class GoalProgressUpdate(BaseModel):
     progress_value: int
     progress_note: Optional[str] = None
-    achieved: bool = False
--e 
+    achieved: bool = False-e 
 
 -e 
 ================================================================================
@@ -2994,144 +3230,163 @@ async def compute_acwr_metrics(payload: ACWRRequest):
 ================================================================================
 📄 FICHIER : backend/app/routers/user.py
 ================================================================================
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+import json
+from typing import Dict, Any
+
 from app.core.database import get_db
 from app.models import sql_models, schemas
 from app.dependencies import get_current_user
-import json
+from app.services.coach_logic import CoachLogic
 
-from fastapi import APIRouter, Depends, HTTPException, status
 router = APIRouter(
     prefix="/user",
     tags=["User Profile"]
 )
 
-@router.get("/profile", response_model=schemas.UserProfileUpdate)
-async def get_profile(
-    current_user: sql_models.User = Depends(get_current_user)
-):
+# --- UTILITAIRES DE MIGRATION ---
+
+def _migrate_legacy_to_v2(user: sql_models.User, db: Session) -> sql_models.AthleteProfile:
     """
-    Récupère le profil complet de l'utilisateur (JSON).
+    Fonction Helper : Convertit les données Legacy (string) en Profil V2 (table).
+    Assure la continuité de service (Zéro Régression).
     """
-    if not current_user.profile_data:
-        return {"profile_data": {}}
+    profile_data = {}
+    if user.profile_data:
+        try:
+            profile_data = json.loads(user.profile_data)
+        except:
+            pass # JSON corrompu ou vide
     
-    try:
-        # On convertit la string stockée en BDD en dictionnaire
-        data = json.loads(current_user.profile_data)
-        return {"profile_data": data}
-    except:
-        return {"profile_data": {}}
+    # 1. Création de la structure V2
+    new_profile = sql_models.AthleteProfile(
+        user_id=user.id,
+        basic_info=json.dumps({
+            "pseudo": user.username,
+            "email": user.email,
+            **profile_data.get('basic_info', {})
+        }),
+        physical_metrics=json.dumps(profile_data.get('physical_metrics', {})),
+        sport_context=json.dumps(profile_data.get('sport_context', {})),
+        training_preferences=json.dumps(profile_data.get('training_preferences', {})),
+        goals=json.dumps(profile_data.get('goals', {})),
+        constraints=json.dumps(profile_data.get('constraints', {})),
+        injury_prevention=json.dumps(profile_data.get('injury_prevention', {})),
+        performance_baseline=json.dumps(profile_data.get('performance_baseline', {}))
+    )
+    
+    db.add(new_profile)
+    db.commit()
+    db.refresh(new_profile)
+    
+    # 2. Initialisation de la mémoire Coach par défaut
+    if not new_profile.coach_memory:
+        memory = CoachLogic.initialize_memory(new_profile)
+        db.add(memory)
+        db.commit()
+        
+    return new_profile
 
-@router.put("/profile")
+# --- ENDPOINTS ---
 
-
-@router.get("/profile/complete", response_model=schemas.AthleteProfileResponse)
-async def get_complete_profile(
+@router.get("/profile", response_model=schemas.AthleteProfileResponse)
+async def get_profile_v2(
     current_user: sql_models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Récupère le profil athlète complet.
-    Compatibilité avec l'ancien système (profile_data) et le nouveau (AthleteProfile).
+    Récupère le profil athlète structuré (V2).
+    Si le profil V2 n'existe pas encore, tente une migration automatique depuis les données Legacy.
     """
-    # Vérifier d'abord si l'utilisateur a un profil athlète v2
+    # Cas 1 : Le profil V2 existe déjà
     if current_user.athlete_profile:
         return current_user.athlete_profile
     
-    # Fallback : retourner les données du profil legacy
+    # Cas 2 : Pas de V2, mais des données Legacy existent (Migration Lazy)
     if current_user.profile_data:
-        try:
-            profile_data = json.loads(current_user.profile_data)
-            return {
-                "id": current_user.id,
-                "user_id": current_user.id,
-                "created_at": current_user.created_at if hasattr(current_user, 'created_at') else None,
-                "basic_info": {
-                    "pseudo": current_user.username,
-                    "email": current_user.email,
-                    **profile_data.get('basic_info', {})
-                },
-                "physical_metrics": profile_data.get('physical_metrics', {}),
-                "sport_context": profile_data.get('sport_context', {}),
-                "training_preferences": profile_data.get('training_preferences', {}),
-                "goals": profile_data.get('goals', {}),
-                "constraints": profile_data.get('constraints', {}),
-                "injury_prevention": profile_data.get('injury_prevention', {}),
-                "performance_baseline": profile_data.get('performance_baseline', {})
-            }
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Erreur lecture profil: {str(e)}"
-            )
+        migrated_profile = _migrate_legacy_to_v2(current_user, db)
+        return migrated_profile
     
-    raise HTTPException(
-        status_code=404,
-        detail="Profil non trouvé. Complétez votre profil d'abord."
-    )
+    # Cas 3 : Nouvel utilisateur vide -> Création profil vierge
+    empty_profile = sql_models.AthleteProfile(user_id=current_user.id)
+    db.add(empty_profile)
+    db.commit()
+    db.refresh(empty_profile)
+    
+    # Init mémoire coach vierge
+    memory = CoachLogic.initialize_memory(empty_profile)
+    db.add(memory)
+    db.commit()
+    
+    return empty_profile
 
-@router.post("/profile/complete", response_model=schemas.AthleteProfileResponse)
-async def create_complete_profile(
-    profile_data: dict,
+@router.put("/profile", response_model=schemas.AthleteProfileResponse)
+async def update_profile_v2(
+    profile_update: schemas.AthleteProfileCreate, # On utilise Create car il contient tous les champs
     db: Session = Depends(get_db),
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    Crée ou met à jour un profil athlète complet.
-    Supporte à la fois l'ancien format (profile_data) et le nouveau (sections).
+    Met à jour le profil athlète.
+    Synchronise AUTOMATIQUEMENT les données vers le système Legacy pour compatibilité.
     """
-    try:
-        # Vérifier si l'utilisateur a déjà un profil athlète v2
-        if current_user.athlete_profile:
-            # Mettre à jour le profil existant
-            profile = current_user.athlete_profile
-            for section, data in profile_data.items():
-                if hasattr(profile, section):
-                    setattr(profile, section, json.dumps(data))
-        else:
-            # Créer un nouveau profil athlète
-            profile = sql_models.AthleteProfile(
-                user_id=current_user.id,
-                basic_info=json.dumps(profile_data.get('basic_info', {})),
-                physical_metrics=json.dumps(profile_data.get('physical_metrics', {})),
-                sport_context=json.dumps(profile_data.get('sport_context', {})),
-                training_preferences=json.dumps(profile_data.get('training_preferences', {})),
-                goals=json.dumps(profile_data.get('goals', {})),
-                constraints=json.dumps(profile_data.get('constraints', {})),
-                injury_prevention=json.dumps(profile_data.get('injury_prevention', {})),
-                performance_baseline=json.dumps(profile_data.get('performance_baseline', {}))
-            )
-            db.add(profile)
-        
-        # Mettre à jour aussi le profil legacy pour compatibilité
-        current_user.profile_data = json.dumps(profile_data)
-        
-        db.commit()
-        db.refresh(profile)
-        
-        return profile
-        
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erreur création profil: {str(e)}"
-        )
+    # 1. Récupération ou Création (via Migration)
+    profile = current_user.athlete_profile
+    if not profile:
+        profile = _migrate_legacy_to_v2(current_user, db)
+    
+    # 2. Mise à jour des colonnes V2 (JSONb)
+    # On convertit les modèles Pydantic en dict, puis en JSON string pour la DB
+    if profile_update.basic_info:
+        profile.basic_info = json.dumps(profile_update.basic_info.dict())
+    if profile_update.physical_metrics:
+        profile.physical_metrics = json.dumps(profile_update.physical_metrics.dict())
+    if profile_update.sport_context:
+        profile.sport_context = json.dumps(profile_update.sport_context.dict())
+    if profile_update.training_preferences:
+        profile.training_preferences = json.dumps(profile_update.training_preferences.dict())
+    
+    # Champs dict directs
+    if profile_update.goals:
+        profile.goals = json.dumps(profile_update.goals)
+    if profile_update.constraints:
+        profile.constraints = json.dumps(profile_update.constraints)
+    if profile_update.injury_prevention:
+        profile.injury_prevention = json.dumps(profile_update.injury_prevention)
+    if profile_update.performance_baseline:
+        profile.performance_baseline = json.dumps(profile_update.performance_baseline)
+
+    # 3. SYNC LEGACY (Anti-Régression)
+    # On reconstruit un gros JSON plat pour l'ancien champ 'profile_data'
+    legacy_data = {
+        "basic_info": json.loads(profile.basic_info) if profile.basic_info else {},
+        "physical_metrics": json.loads(profile.physical_metrics) if profile.physical_metrics else {},
+        "sport_context": json.loads(profile.sport_context) if profile.sport_context else {},
+        "training_preferences": json.loads(profile.training_preferences) if profile.training_preferences else {},
+        "goals": json.loads(profile.goals) if profile.goals else {},
+        "constraints": json.loads(profile.constraints) if profile.constraints else {},
+        "injury_prevention": json.loads(profile.injury_prevention) if profile.injury_prevention else {},
+        "performance_baseline": json.loads(profile.performance_baseline) if profile.performance_baseline else {}
+    }
+    current_user.profile_data = json.dumps(legacy_data)
+
+    db.commit()
+    db.refresh(profile)
+    
+    return profile
 
 @router.post("/profile/sections/{section}")
 async def update_profile_section(
     section: str,
-    section_data: dict,
+    section_data: schemas.ProfileSectionUpdate,
     db: Session = Depends(get_db),
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    Met à jour une section spécifique du profil.
-    Section peut être: basic_info, physical_metrics, sport_context, etc.
+    Met à jour une section spécifique du profil (Optimisation Mobile).
+    Évite d'envoyer tout le profil pour changer juste le poids.
     """
-    # Liste des sections valides
     valid_sections = [
         'basic_info', 'physical_metrics', 'sport_context',
         'training_preferences', 'goals', 'constraints',
@@ -3144,219 +3399,51 @@ async def update_profile_section(
             detail=f"Section invalide. Options: {', '.join(valid_sections)}"
         )
     
-    try:
-        # Mettre à jour le profil athlète v2 si existant
-        if current_user.athlete_profile:
-            profile = current_user.athlete_profile
-            setattr(profile, section, json.dumps(section_data))
-        else:
-            # Si pas de profil athlète, créer un profil minimal
-            profile = sql_models.AthleteProfile(user_id=current_user.id)
-            setattr(profile, section, json.dumps(section_data))
-            db.add(profile)
-        
-        # Mettre à jour aussi le profil legacy
-        legacy_data = {}
-        if current_user.profile_data:
-            try:
-                legacy_data = json.loads(current_user.profile_data)
-            except:
-                pass
-        
-        legacy_data[section] = section_data
-        current_user.profile_data = json.dumps(legacy_data)
-        
-        db.commit()
-        
-        return {
-            "status": "success",
-            "message": f"Section '{section}' mise à jour",
-            "section": section,
-            "data": section_data
-        }
-        
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erreur mise à jour section: {str(e)}"
-        )
+    # 1. Récupération / Migration
+    profile = current_user.athlete_profile
+    if not profile:
+        profile = _migrate_legacy_to_v2(current_user, db)
+    
+    # 2. Mise à jour de la section spécifique
+    setattr(profile, section, json.dumps(section_data.section_data))
+    
+    # 3. Sync Legacy (nécessaire même pour une update partielle)
+    legacy_data = {}
+    if current_user.profile_data:
+        try:
+            legacy_data = json.loads(current_user.profile_data)
+        except:
+            pass
+    
+    legacy_data[section] = section_data.section_data
+    current_user.profile_data = json.dumps(legacy_data)
+    
+    db.commit()
+    
+    return {
+        "status": "success",
+        "section": section,
+        "updated_data": section_data.section_data
+    }
 
-
+# --- SUPPORT LEGACY (Compatibilité Frontend V1) ---
 
 @router.get("/profile/complete", response_model=schemas.AthleteProfileResponse)
-async def get_complete_profile(
+async def get_profile_complete_alias(
     current_user: sql_models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Récupère le profil athlète complet.
-    Compatibilité avec l'ancien système (profile_data) et le nouveau (AthleteProfile).
-    """
-    # Vérifier d'abord si l'utilisateur a un profil athlète v2
-    if current_user.athlete_profile:
-        return current_user.athlete_profile
-    
-    # Fallback : retourner les données du profil legacy
-    if current_user.profile_data:
-        try:
-            profile_data = json.loads(current_user.profile_data)
-            return {
-                "id": current_user.id,
-                "user_id": current_user.id,
-                "created_at": current_user.created_at if hasattr(current_user, 'created_at') else None,
-                "basic_info": {
-                    "pseudo": current_user.username,
-                    "email": current_user.email,
-                    **profile_data.get('basic_info', {})
-                },
-                "physical_metrics": profile_data.get('physical_metrics', {}),
-                "sport_context": profile_data.get('sport_context', {}),
-                "training_preferences": profile_data.get('training_preferences', {}),
-                "goals": profile_data.get('goals', {}),
-                "constraints": profile_data.get('constraints', {}),
-                "injury_prevention": profile_data.get('injury_prevention', {}),
-                "performance_baseline": profile_data.get('performance_baseline', {})
-            }
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Erreur lecture profil: {str(e)}"
-            )
-    
-    raise HTTPException(
-        status_code=404,
-        detail="Profil non trouvé. Complétez votre profil d'abord."
-    )
+    """Alias pour compatibilité avec l'ancien routeur profiles.py"""
+    return await get_profile_v2(current_user, db)
 
 @router.post("/profile/complete", response_model=schemas.AthleteProfileResponse)
-async def create_complete_profile(
-    profile_data: dict,
+async def create_profile_complete_alias(
+    profile_data: schemas.AthleteProfileCreate,
     db: Session = Depends(get_db),
     current_user: sql_models.User = Depends(get_current_user)
 ):
-    """
-    Crée ou met à jour un profil athlète complet.
-    Supporte à la fois l'ancien format (profile_data) et le nouveau (sections).
-    """
-    try:
-        # Vérifier si l'utilisateur a déjà un profil athlète v2
-        if current_user.athlete_profile:
-            # Mettre à jour le profil existant
-            profile = current_user.athlete_profile
-            for section, data in profile_data.items():
-                if hasattr(profile, section):
-                    setattr(profile, section, json.dumps(data))
-        else:
-            # Créer un nouveau profil athlète
-            profile = sql_models.AthleteProfile(
-                user_id=current_user.id,
-                basic_info=json.dumps(profile_data.get('basic_info', {})),
-                physical_metrics=json.dumps(profile_data.get('physical_metrics', {})),
-                sport_context=json.dumps(profile_data.get('sport_context', {})),
-                training_preferences=json.dumps(profile_data.get('training_preferences', {})),
-                goals=json.dumps(profile_data.get('goals', {})),
-                constraints=json.dumps(profile_data.get('constraints', {})),
-                injury_prevention=json.dumps(profile_data.get('injury_prevention', {})),
-                performance_baseline=json.dumps(profile_data.get('performance_baseline', {}))
-            )
-            db.add(profile)
-        
-        # Mettre à jour aussi le profil legacy pour compatibilité
-        current_user.profile_data = json.dumps(profile_data)
-        
-        db.commit()
-        db.refresh(profile)
-        
-        return profile
-        
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erreur création profil: {str(e)}"
-        )
-
-@router.post("/profile/sections/{section}")
-async def update_profile_section(
-    section: str,
-    section_data: dict,
-    db: Session = Depends(get_db),
-    current_user: sql_models.User = Depends(get_current_user)
-):
-    """
-    Met à jour une section spécifique du profil.
-    Section peut être: basic_info, physical_metrics, sport_context, etc.
-    """
-    # Liste des sections valides
-    valid_sections = [
-        'basic_info', 'physical_metrics', 'sport_context',
-        'training_preferences', 'goals', 'constraints',
-        'injury_prevention', 'performance_baseline'
-    ]
-    
-    if section not in valid_sections:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Section invalide. Options: {', '.join(valid_sections)}"
-        )
-    
-    try:
-        # Mettre à jour le profil athlète v2 si existant
-        if current_user.athlete_profile:
-            profile = current_user.athlete_profile
-            setattr(profile, section, json.dumps(section_data))
-        else:
-            # Si pas de profil athlète, créer un profil minimal
-            profile = sql_models.AthleteProfile(user_id=current_user.id)
-            setattr(profile, section, json.dumps(section_data))
-            db.add(profile)
-        
-        # Mettre à jour aussi le profil legacy
-        legacy_data = {}
-        if current_user.profile_data:
-            try:
-                legacy_data = json.loads(current_user.profile_data)
-            except:
-                pass
-        
-        legacy_data[section] = section_data
-        current_user.profile_data = json.dumps(legacy_data)
-        
-        db.commit()
-        
-        return {
-            "status": "success",
-            "message": f"Section '{section}' mise à jour",
-            "section": section,
-            "data": section_data
-        }
-        
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erreur mise à jour section: {str(e)}"
-        )
-
-async def update_profile(
-    profile: schemas.UserProfileUpdate,
-    db: Session = Depends(get_db),
-    current_user: sql_models.User = Depends(get_current_user)
-):
-    """
-    Sauvegarde le profil complet (Age, Benchmarks, Planning...).
-    """
-    try:
-        # On convertit le dictionnaire reçu en string pour le stockage SQL
-        json_str = json.dumps(profile.profile_data)
-        current_user.profile_data = json_str
-        
-        db.commit()
-        db.refresh(current_user)
-        return {"message": "Profil mis à jour avec succès"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur sauvegarde: {str(e)}")-e 
+    """Alias pour compatibilité avec l'ancien routeur profiles.py"""
+    return await update_profile_v2(profile_data, db, current_user)  -e 
 
 -e 
 ================================================================================
@@ -3370,7 +3457,7 @@ from app.models import sql_models, schemas
 from app.dependencies import get_current_user
 import json
 
-# [DEV-CARD #03] Imports du Moteur de Feed
+# Imports du Moteur de Feed
 from app.services.feed.engine import TriggerEngine
 from app.services.feed.triggers.workout_analysis import WorkoutAnalysisTrigger
 
@@ -3385,6 +3472,13 @@ async def create_workout(
     db: Session = Depends(get_db),
     current_user: sql_models.User = Depends(get_current_user)
 ):
+    """
+    Enregistre une séance complète avec gestion du Polymorphisme (Metric Type).
+    Vérifie la cohérence des données (ex: Watts max, RPE bounds).
+    Supprime le brouillon associé une fois la séance validée.
+    Active le Neural Feed pour l'analyse post-séance.
+    """
+
     # --- VALIDATION PHYSIOLOGIQUE ---
     def validate_physiological_limits(workout: schemas.WorkoutSessionCreate):
         """Valide les limites physiologiques humaines."""
@@ -3438,12 +3532,6 @@ async def create_workout(
     # Appliquer la validation
     validate_physiological_limits(workout)
 
-    """
-    Enregistre une séance complète avec gestion du Polymorphisme (Metric Type).
-    Vérifie la cohérence des données (ex: Watts max, RPE bounds).
-    [DEV-CARD #05] Supprime le brouillon associé une fois la séance validée.
-    [DEV-CARD #03] Active le Neural Feed pour l'analyse post-séance.
-    """
     # 1. Validation de haut niveau avant insertion
     for s in workout.sets:
         # Validation RPE
@@ -3458,18 +3546,18 @@ async def create_workout(
                 raise HTTPException(status_code=400, detail=f"Valeur impossible : {s.weight} Watts sur l'exercice {s.exercise_name}. Vérifiez la saisie.")
         
         elif s.metric_type == 'PACE_DISTANCE':
-            # Dans ce mode : weight = Vitesse/Pace (souvent 0 si calculée) ou Distance, reps = Distance ou Temps
             # Standard TitanFlow : Reps = Distance (m), Weight = 0 (ou vitesse m/s)
             if s.reps > 100000: # 100km max par série pour être sûr
                  raise HTTPException(status_code=400, detail=f"Distance suspecte : {s.reps} mètres.")
 
-    # 2. Création de la Session
+    # 2. Création de la Session (INSERT)
     db_workout = sql_models.WorkoutSession(
         date=workout.date,
         duration=workout.duration,
         rpe=workout.rpe,
         energy_level=workout.energy_level,
         notes=workout.notes,
+        ai_analysis=workout.ai_analysis, # <--- AJOUT CRITIQUE POUR BE-03
         user_id=current_user.id
     )
     db.add(db_workout)
@@ -3487,23 +3575,20 @@ async def create_workout(
                 weight=s.weight, # Déjà nettoyé par Pydantic (float)
                 reps=s.reps,     # Déjà nettoyé par Pydantic (float, secondes inclues)
                 rpe=s.rpe,
-                rest_seconds=s.rest_seconds,
-                metric_type=s.metric_type # Le fameux recording_mode
+                rest_seconds=s.rest_seconds, # <--- DEJA SUPPORTE PAR SQL MODEL
+                metric_type=s.metric_type    # <--- DEJA SUPPORTE PAR SQL MODEL
             )
             db.add(db_set)
         
-        # [DEV-CARD #05] Nettoyage du brouillon après succès
+        # Nettoyage du brouillon après succès
         current_user.draft_workout_data = None
         
         db.commit()
         db.refresh(db_workout)
 
-    # 4. [DEV-CARD #03] TRIGGER NEURAL FEED (L'IA s'active ici)
-    # On lance l'analyse immédiatement (await) pour que le feed soit à jour 
-    # quand l'utilisateur revient sur l'accueil.
+    # 4. TRIGGER NEURAL FEED (L'IA s'active ici)
     try:
-        # [MODIF V2] On passe le profil complet dans le contexte via user_data
-        # On tente de parser le JSON profile_data s'il existe
+        # On passe le profil complet dans le contexte via user_data
         profile_data = {}
         if current_user.profile_data:
             try:
@@ -3515,7 +3600,7 @@ async def create_workout(
         engine.register(WorkoutAnalysisTrigger())
         await engine.run_all(db, current_user.id, {
             "workout": db_workout,
-            "profile": profile_data # <--- ICI, on injecte les données pour le Bio-Twin
+            "profile": profile_data
         })
     except Exception as e:
         # On ne bloque pas la réponse si l'IA échoue, c'est du bonus
@@ -5316,96 +5401,6 @@ else:
 
 -e 
 ================================================================================
-📄 FICHIER : backend/debug_tokens.py
-================================================================================
-#!/usr/bin/env python3
-"""
-Debug JWT tokens - Vérifie pourquoi les tokens sont rejetés
-"""
-
-import jwt
-import os
-from datetime import datetime
-import sys
-
-# Charger les variables d'environnement
-from dotenv import load_dotenv
-load_dotenv()
-
-SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret_key_if_env_missing")
-ALGORITHM = "HS256"
-
-def decode_and_verify(token: str):
-    """Décode et vérifie un token JWT"""
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        
-        print("✅ TOKEN VALIDE")
-        print(f"📋 Payload: {payload}")
-        
-        # Vérifier l'expiration
-        exp_timestamp = payload.get('exp')
-        if exp_timestamp:
-            exp_date = datetime.fromtimestamp(exp_timestamp)
-            now = datetime.now()
-            time_left = exp_date - now
-            
-            print(f"⏰ Expiration: {exp_date}")
-            print(f"⏳ Temps restant: {time_left}")
-            
-            if time_left.total_seconds() < 0:
-                print("❌ TOKEN EXPIRE !")
-            else:
-                print("✅ Token encore valide")
-        
-        return payload
-    except jwt.ExpiredSignatureError:
-        print("❌ ERREUR: Token expiré")
-        return None
-    except jwt.InvalidTokenError as e:
-        print(f"❌ ERREUR: Token invalide - {e}")
-        return None
-
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python debug_tokens.py <token>")
-        print("Ou: python debug_tokens.py --check-all")
-        return
-    
-    if sys.argv[1] == "--check-all":
-        # Vérifier les tokens stockés dans un échantillon
-        sample_tokens = []
-        # Vous pouvez ajouter des tokens de test ici
-        for token in sample_tokens:
-            decode_and_verify(token)
-    else:
-        token = sys.argv[1]
-        decode_and_verify(token)
-
-if __name__ == "__main__":
-    main()-e 
-
--e 
-================================================================================
-📄 FICHIER : backend/disable_coach_cache.py
-================================================================================
-import re
-
-with open('app/routers/coach.py', 'r') as f:
-    content = f.read()
-
-# Supprimer TOUTES les références à cache dans ce fichier
-content = re.sub(r'from app\.core\.cache import[^\n]*\n', '', content)
-content = re.sub(r'@cached_response[^\n]*\n', '', content)
-
-with open('app/routers/coach.py', 'w') as f:
-    f.write(new_content)
-
-print("✅ Cache complètement désactivé pour coach.py")
--e 
-
--e 
-================================================================================
 📄 FICHIER : backend/exe.py
 ================================================================================
 #!/usr/bin/env python3
@@ -5909,66 +5904,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ ERREUR INATTENDUE: {e}")
         print("   Contactez le support technique")-e 
-
--e 
-================================================================================
-📄 FICHIER : backend/fix_coach_cache.py
-================================================================================
-#!/usr/bin/env python3
-"""
-Retire le décorateur @cached_response de la fonction generate_workout
-qui cause l'erreur de sérialisation JSON
-"""
-
-import re
-
-with open('app/routers/coach.py', 'r') as f:
-    content = f.read()
-
-# Trouver la fonction generate_workout
-pattern = r'@cached_response\(ttl_hours=6\)\s*\nasync def generate_workout'
-match = re.search(pattern, content)
-
-if match:
-    print("🔧 Retrait du décorateur @cached_response problématique...")
-    
-    # Retirer la ligne du décorateur
-    new_content = content.replace(match.group(0), 'async def generate_workout')
-    
-    with open('app/routers/coach.py', 'w') as f:
-        f.write(new_content)
-    
-    print("✅ Décorateur retiré avec succès")
-else:
-    print("✅ Le décorateur n'est pas présent ou a déjà été retiré")
--e 
-
--e 
-================================================================================
-📄 FICHIER : backend/fix_table.py
-================================================================================
-from sqlalchemy import text
-from app.core.database import engine
-
-print("☢️  Démarrage de l'option nucléaire...")
-
-with engine.connect() as connection:
-    trans = connection.begin()
-    try:
-        # On supprime d'abord les séances (qui dépendent des users)
-        connection.execute(text("DROP TABLE IF EXISTS workout_sessions CASCADE;"))
-        print("💥 Table workout_sessions pulvérisée.")
-        
-        # On supprime ensuite les users (pour recréer la table avec l'email)
-        connection.execute(text("DROP TABLE IF EXISTS users CASCADE;"))
-        print("💥 Table users pulvérisée.")
-        
-        trans.commit()
-    except Exception as e:
-        trans.rollback()
-        print(f"❌ Erreur : {e}")
-
-print("✅ Terminé. Redémarre le serveur pour recréer les tables propres.")-e 
 
 -e 
 ================================================================================
@@ -6931,586 +6866,266 @@ except Exception as e:
 ================================================================================
 📄 FICHIER : backend/migrate_db.py
 ================================================================================
-import os
-import json
-import sqlalchemy
-from sqlalchemy import text, inspect
-from dotenv import load_dotenv
-import logging
+#!/usr/bin/env python3
+"""
+Script autonome de migration de base de données pour TitanFlow
+Exécute toutes les migrations nécessaires pour les tables Feed & Workouts
+"""
+
 import sys
+import os
+from pathlib import Path
 
-# Configuration du logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Ajouter le backend au path
+sys.path.append(str(Path(__file__).parent))
 
-# Charge les variables locales
+from sqlalchemy import create_engine, text, inspect
+from dotenv import load_dotenv
+
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-# Correction pour Render qui utilise parfois postgres:// au lieu de postgresql://
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-if not DATABASE_URL:
-    logger.error("❌ Erreur : Pas de DATABASE_URL trouvée.")
-    sys.exit(1)
-
-logger.info(f"🔌 Connexion à la BDD...")
-engine = sqlalchemy.create_engine(DATABASE_URL)
-
-def table_exists(connection, table_name):
-    """Vérifie si une table existe"""
-    inspector = inspect(engine)
-    return table_name in inspector.get_table_names()
-
-def column_exists(connection, table_name, column_name):
-    """Vérifie si une colonne existe dans une table"""
-    inspector = inspect(engine)
-    columns = [col['name'] for col in inspector.get_columns(table_name)]
-    return column_name in columns
-
-def migrate_v1_to_v2_data(connection):
-    """
-    Migre les données de l'ancien format (User.profile_data) 
-    vers le nouveau format (AthleteProfile + CoachMemory).
-    """
-    logger.info("🔄 Vérification de la migration des données V1 -> V2...")
+def check_database_status():
+    """Vérifie l'état actuel de la base de données"""
+    print("🔍 Diagnostic de la base de données...")
     
-    # Récupérer les utilisateurs qui n'ont pas encore de profil V2
-    # On vérifie s'il existe une entrée dans athlete_profiles pour chaque user
-    sql_check = text("""
-        SELECT u.id, u.username, u.email, u.profile_data 
-        FROM users u 
-        LEFT JOIN athlete_profiles ap ON u.id = ap.user_id 
-        WHERE ap.id IS NULL
-    """)
+    db_url = os.getenv("DATABASE_URL", "sqlite:///./sql_app.db")
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+        
+    engine = create_engine(db_url)
     
-    result = connection.execute(sql_check)
-    users_to_migrate = result.fetchall()
+    with engine.connect() as conn:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        
+        print(f"📊 {len(tables)} tables trouvées:")
+        for table in sorted(tables):
+            columns = inspector.get_columns(table)
+            print(f"  - {table}: {len(columns)} colonnes")
+            for col in columns[:3]:  # Afficher seulement 3 colonnes par table
+                print(f"    • {col['name']} ({col['type']})")
     
-    if not users_to_migrate:
-        logger.info("✅ Toutes les données utilisateurs sont déjà migrées.")
-        return
+    return engine
 
-    logger.info(f"🚀 Migration de {len(users_to_migrate)} profils utilisateurs...")
+def create_feed_items_table(engine):
+    """Crée la table feed_items si elle n'existe pas"""
+    print("\n📨 Création de la table feed_items...")
     
-    migrated_count = 0
-    for u in users_to_migrate:
+    with engine.connect() as conn:
+        trans = conn.begin()
         try:
-            # 1. Parsing de l'ancien JSON (s'il existe)
-            old_data = {}
-            if u.profile_data:
-                try:
-                    old_data = json.loads(u.profile_data)
-                except:
-                    logger.warning(f"⚠️ JSON invalide pour user {u.username}, utilisation par défaut.")
+            # Vérifier si la table existe déjà
+            inspector = inspect(engine)
+            if 'feed_items' in inspector.get_table_names():
+                print("✅ Table feed_items existe déjà")
+                return
             
-            # 2. Construction des nouvelles structures JSON
-            # On mappe les anciens champs vers la nouvelle architecture
-            basic_info = json.dumps({
-                "pseudo": u.username, 
-                "email": u.email,
-                "training_age": old_data.get("experience_years", 0)
-            })
+            # Créer la table
+            conn.execute(text("""
+                CREATE TABLE feed_items (
+                    id VARCHAR PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    type VARCHAR NOT NULL,
+                    title VARCHAR NOT NULL,
+                    message VARCHAR NOT NULL,
+                    action_payload TEXT,
+                    is_read BOOLEAN DEFAULT FALSE,
+                    is_completed BOOLEAN DEFAULT FALSE,
+                    priority INTEGER DEFAULT 1,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """))
             
-            physical_metrics = json.dumps({
-                "weight": float(old_data.get("weight", 0) or 0), 
-                "height": float(old_data.get("height", 0) or 0),
-                "body_fat": None
-            })
+            # Créer les index
+            conn.execute(text("""
+                CREATE INDEX idx_feed_items_user_id 
+                ON feed_items(user_id) WHERE is_completed = FALSE;
+            """))
             
-            sport_context = json.dumps({
-                "sport": old_data.get("sport", "Autre"), 
-                "level": old_data.get("level", "Intermédiaire"),
-                "position": old_data.get("position", None)
-            })
+            conn.execute(text("""
+                CREATE INDEX idx_feed_items_type 
+                ON feed_items(type);
+            """))
             
-            goals = json.dumps({
-                "primary_goal": old_data.get("goal", "Forme générale")
-            })
-
-            # 3. Insertion dans athlete_profiles
-            # Note: On utilise des requêtes paramétrées pour la sécurité
-            insert_profile_sql = text("""
-                INSERT INTO athlete_profiles (user_id, basic_info, physical_metrics, sport_context, goals)
-                VALUES (:uid, :bi, :pm, :sc, :gl)
-                RETURNING id
-            """)
+            conn.execute(text("""
+                CREATE INDEX idx_feed_items_priority_created 
+                ON feed_items(priority DESC, created_at DESC);
+            """))
             
-            res = connection.execute(insert_profile_sql, {
-                "uid": u.id, 
-                "bi": basic_info, 
-                "pm": physical_metrics, 
-                "sc": sport_context,
-                "gl": goals
-            })
-            
-            # Récupération de l'ID généré pour lier la mémoire
-            profile_id = res.scalar()
-            
-            # 4. Initialisation de CoachMemory (Valeurs par défaut)
-            insert_memory_sql = text("""
-                INSERT INTO coach_memories (athlete_profile_id, current_context, memory_flags, metadata_info)
-                VALUES (:pid, :ctx, :flags, :meta)
-            """)
-            
-            default_context = json.dumps({"readiness_score": 80, "phase": "Integration", "fatigue_state": "Fresh"})
-            default_flags = json.dumps({"migrated_from_v1": True})
-            default_meta = json.dumps({"created_via": "migration_script"})
-            
-            connection.execute(insert_memory_sql, {
-                "pid": profile_id,
-                "ctx": default_context,
-                "flags": default_flags,
-                "meta": default_meta
-            })
-            
-            migrated_count += 1
-            
-        except Exception as e:
-            logger.error(f"❌ Erreur migration user {u.username} (ID: {u.id}): {e}")
-
-    logger.info(f"✨ Succès : {migrated_count} profils migrés vers l'architecture V2.")
-
-
-def apply_migration():
-    """Applique toutes les migrations nécessaires (Structure + Données)"""
-    with engine.connect() as connection:
-        trans = connection.begin()
-        try:
-            logger.info("🛠️ Début des migrations de structure...")
-            
-            # --- 1. TABLES CORE (EXISTANTES) ---
-            
-            # Users
-            if not table_exists(connection, "users"):
-                logger.info("Création table 'users'...")
-                connection.execute(text("""
-                    CREATE TABLE users (
-                        id SERIAL PRIMARY KEY,
-                        username VARCHAR UNIQUE NOT NULL,
-                        email VARCHAR UNIQUE,
-                        hashed_password VARCHAR NOT NULL,
-                        profile_data TEXT,
-                        strategy_data TEXT,
-                        weekly_plan_data TEXT,
-                        draft_workout_data TEXT
-                    );
-                """))
-            
-            # Workout Sessions
-            if not table_exists(connection, "workout_sessions"):
-                logger.info("Création table 'workout_sessions'...")
-                connection.execute(text("""
-                    CREATE TABLE workout_sessions (
-                        id SERIAL PRIMARY KEY,
-                        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                        date DATE NOT NULL,
-                        duration FLOAT NOT NULL,
-                        rpe FLOAT NOT NULL,
-                        energy_level INTEGER DEFAULT 5,
-                        notes TEXT,
-                        ai_analysis TEXT,
-                        created_at TIMESTAMPTZ DEFAULT NOW()
-                    );
-                """))
-            
-            # Workout Sets
-            if not table_exists(connection, "workout_sets"):
-                logger.info("Création table 'workout_sets'...")
-                connection.execute(text("""
-                    CREATE TABLE workout_sets (
-                        id SERIAL PRIMARY KEY,
-                        session_id INTEGER REFERENCES workout_sessions(id) ON DELETE CASCADE,
-                        exercise_name VARCHAR NOT NULL,
-                        set_order INTEGER NOT NULL,
-                        weight FLOAT DEFAULT 0.0,
-                        reps FLOAT DEFAULT 0.0,
-                        rpe FLOAT DEFAULT 0.0,
-                        rest_seconds INTEGER DEFAULT 0,
-                        metric_type VARCHAR DEFAULT 'LOAD_REPS'
-                    );
-                """))
-
-            # Feed Items
-            if not table_exists(connection, "feed_items"):
-                logger.info("Création table 'feed_items'...")
-                connection.execute(text("""
-                    CREATE TABLE feed_items (
-                        id VARCHAR PRIMARY KEY,
-                        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                        type VARCHAR NOT NULL,
-                        title VARCHAR NOT NULL,
-                        message VARCHAR NOT NULL,
-                        action_payload TEXT,
-                        is_read BOOLEAN DEFAULT FALSE,
-                        is_completed BOOLEAN DEFAULT FALSE,
-                        priority INTEGER DEFAULT 1,
-                        created_at TIMESTAMPTZ DEFAULT NOW()
-                    );
-                """))
-
-            # --- 2. NOUVELLES TABLES V2 (TITANFLOW PRO) ---
-
-            # Athlete Profiles
-            if not table_exists(connection, "athlete_profiles"):
-                logger.info("🆕 Création table 'athlete_profiles' (V2)...")
-                # Utilisation de JSON (compatible Postgres/SQLite via SQLAlchemy abstraction usually, 
-                # mais en raw SQL on utilise JSON ou TEXT selon le moteur. Ici JSON est standard PG)
-                connection.execute(text("""
-                    CREATE TABLE athlete_profiles (
-                        id SERIAL PRIMARY KEY,
-                        user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-                        basic_info JSON DEFAULT '{}',
-                        physical_metrics JSON DEFAULT '{}',
-                        sport_context JSON DEFAULT '{}',
-                        performance_baseline JSON DEFAULT '{}',
-                        injury_prevention JSON DEFAULT '{}',
-                        training_preferences JSON DEFAULT '{}',
-                        goals JSON DEFAULT '{}',
-                        constraints JSON DEFAULT '{}',
-                        created_at TIMESTAMPTZ DEFAULT NOW(),
-                        updated_at TIMESTAMPTZ DEFAULT NOW()
-                    );
-                """))
-                logger.info("✅ Table 'athlete_profiles' créée.")
-
-            # Coach Memories
-            if not table_exists(connection, "coach_memories"):
-                logger.info("🆕 Création table 'coach_memories' (V2)...")
-                connection.execute(text("""
-                    CREATE TABLE coach_memories (
-                        id SERIAL PRIMARY KEY,
-                        athlete_profile_id INTEGER UNIQUE REFERENCES athlete_profiles(id) ON DELETE CASCADE,
-                        metadata_info JSON DEFAULT '{}',
-                        current_context JSON DEFAULT '{}',
-                        response_patterns JSON DEFAULT '{}',
-                        performance_baselines JSON DEFAULT '{}',
-                        adaptation_signals JSON DEFAULT '{}',
-                        sport_specific_insights JSON DEFAULT '{}',
-                        training_history_summary JSON DEFAULT '{}',
-                        athlete_preferences JSON DEFAULT '{}',
-                        coach_notes JSON DEFAULT '{}',
-                        memory_flags JSON DEFAULT '{}',
-                        last_updated TIMESTAMPTZ DEFAULT NOW()
-                    );
-                """))
-                logger.info("✅ Table 'coach_memories' créée.")
-
-            # --- 3. MIGRATION DES COLONNES MANQUANTES (LEGACY) ---
-            
-            if table_exists(connection, "users"):
-                migrations_users = [
-                                        ("email", "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR UNIQUE;"),
-                    ("profile_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"),
-                    ("strategy_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"),
-                    ("weekly_plan_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"),
-                    ("draft_workout_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"),
-                ]
-                for col_name, sql in migrations_users:
-                    if not column_exists(connection, "users", col_name):
-                        logger.info(f"Ajout colonne '{col_name}' -> 'users'")
-                        connection.execute(text(sql))
-
-            if table_exists(connection, "workout_sessions"):
-                migrations_sessions = [
-                    ("energy_level", "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"),
-                    ("notes", "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"),
-                    ("created_at", "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"),
-                    ("ai_analysis", "ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS ai_analysis TEXT;"),
-                ]
-                for col_name, sql in migrations_sessions:
-                    if not column_exists(connection, "workout_sessions", col_name):
-                        logger.info(f"Ajout colonne '{col_name}' -> 'workout_sessions'")
-                        connection.execute(text(sql))
-
-            if table_exists(connection, "workout_sets"):
-                migrations_sets = [
-                    ("metric_type", "ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"),
-                    ("rest_seconds", "ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"),
-                ]
-                for col_name, sql in migrations_sets:
-                    if not column_exists(connection, "workout_sets", col_name):
-                        logger.info(f"Ajout colonne '{col_name}' -> 'workout_sets'")
-                        connection.execute(text(sql))
-
-            # --- 4. INDEXATION ---
-            logger.info("Optimisation des index...")
-            indexes = [
-                "CREATE INDEX IF NOT EXISTS idx_workout_sessions_user_id ON workout_sessions(user_id);",
-                "CREATE INDEX IF NOT EXISTS idx_workout_sessions_date ON workout_sessions(date);",
-                "CREATE INDEX IF NOT EXISTS idx_feed_items_user_id ON feed_items(user_id);",
-                # Index V2
-                "CREATE INDEX IF NOT EXISTS idx_athlete_profiles_user_id ON athlete_profiles(user_id);",
-                "CREATE INDEX IF NOT EXISTS idx_coach_memories_profile_id ON coach_memories(athlete_profile_id);"
-            ]
-            
-            for idx_sql in indexes:
-                try:
-                    connection.execute(text(idx_sql))
-                except Exception as e:
-                    logger.warning(f"⚠️ Index existant ou erreur mineure: {e}")
-            
-            # --- 5. MIGRATION DES DONNÉES ---
-            migrate_v1_to_v2_data(connection)
-
             trans.commit()
-            logger.info("🎉 Toutes les migrations (Structure V2 + Données) sont terminées !")
-            return True
+            print("✅ Table feed_items créée avec succès")
             
         except Exception as e:
             trans.rollback()
-            logger.error(f"❌ CRASH MIGRATION : {str(e)}")
-            return False
+            print(f"❌ Erreur création feed_items: {e}")
+            raise
 
-if __name__ == "__main__":
-    logger.info("🚀 Lancement TitanFlow DB Migrator...")
-    success = apply_migration()
-    if success:
-        sys.exit(0)
-    else:
-        sys.exit(1)-e 
-
--e 
-================================================================================
-📄 FICHIER : backend/migrate_to_v2.py
-================================================================================
-#!/usr/bin/env python3
-"""
-Script de migration des données existantes vers les nouveaux modèles v2
-"""
-import sys
-import json
-import logging
-from datetime import datetime
-from sqlalchemy.orm import Session
-
-# Ajouter le chemin du backend
-sys.path.append('.')
-
-from app.core.database import SessionLocal, engine
-from app.models import sql_models
-from app.services.coach_memory.service import CoachMemoryService
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-def migrate_existing_users():
-    """Migre les utilisateurs existants vers les nouveaux modèles"""
-    logger.info("🚀 Démarrage de la migration vers v2...")
+def add_missing_columns(engine):
+    """Ajoute les colonnes manquantes aux tables existantes"""
+    print("\n➕ Ajout des colonnes manquantes...")
     
-    db = SessionLocal()
-    try:
-        # Vérifier si les nouvelles tables existent
-        inspector = sql_models.inspect(engine)
-        table_names = inspector.get_table_names()
-        
-        if 'athlete_profiles' not in table_names:
-            logger.error("❌ Table 'athlete_profiles' non trouvée. Exécutez d'abord les migrations SQL.")
-            return False
-        
-        # Récupérer tous les utilisateurs
-        users = db.query(sql_models.User).all()
-        logger.info(f"👥 {len(users)} utilisateurs à migrer")
-        
-        migrated_count = 0
-        skipped_count = 0
-        error_count = 0
-        
-        for user in users:
-            try:
-                # Vérifier si l'utilisateur a déjà un profil
-                existing_profile = db.query(sql_models.AthleteProfile).filter(
-                    sql_models.AthleteProfile.user_id == user.id
-                ).first()
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            inspector = inspect(engine)
+            
+            # Table WORKOUT_SESSIONS
+            if 'workout_sessions' in inspector.get_table_names():
+                columns = [col['name'] for col in inspector.get_columns('workout_sessions')]
                 
-                if existing_profile:
-                    logger.info(f"⏭️  Utilisateur {user.username} déjà migré")
-                    skipped_count += 1
-                    continue
+                if 'energy_level' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sessions ADD COLUMN energy_level INTEGER DEFAULT 5;"))
+                    print("✅ Colonne energy_level ajoutée à workout_sessions")
                 
-                # Extraire les données existantes
-                profile_data = json.loads(user.profile_data) if user.profile_data else {}
+                if 'notes' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sessions ADD COLUMN notes TEXT;"))
+                    print("✅ Colonne notes ajoutée à workout_sessions")
                 
-                # Construire le profil enrichi
-                athlete_profile = sql_models.AthleteProfile(
-                    user_id=user.id,
-                    basic_info=json.dumps({
-                        "pseudo": user.username,
-                        "email": user.email,
-                        "birth_date": None,
-                        "biological_sex": profile_data.get('gender', 'Homme'),
-                        "dominant_hand": None,
-                        "biological_age": None,
-                        "training_age": None
-                    }),
-                    physical_metrics=json.dumps({
-                        "height": profile_data.get('height'),
-                        "weight": profile_data.get('weight'),
-                        "body_fat_estimate": None,
-                        "resting_heart_rate": None,
-                        "hrv_baseline": None,
-                        "sleep_quality_average": None,
-                        "last_updated": None
-                    }),
-                    sport_context=json.dumps({
-                        "primary_sport": profile_data.get('sport', 'Musculation'),
-                        "secondary_sports": [],
-                        "playing_position": None,
-                        "competition_level": profile_data.get('level', 'Amateur'),
-                        "training_environment": None,
-                        "available_equipment": profile_data.get('equipment', ['Standard']),
-                        "training_history_years": None
-                    }),
-                    performance_baseline=json.dumps({
-                        "strength_level": None,
-                        "endurance_level": None,
-                        "power_level": None,
-                        "mobility_level": None,
-                        "current_prs": {},
-                        "last_test_dates": {}
-                    }),
-                    injury_prevention=json.dumps({
-                        "chronic_issues": profile_data.get('injuries', []),
-                        "injury_history": [],
-                        "weak_links_identified": [],
-                        "prehab_focus": [],
-                        "medical_clearance": True
-                    }),
-                    training_preferences=json.dumps({
-                        "preferred_training_split": None,
-                        "max_session_duration": 60,
-                        "ideal_training_times": [],
-                        "disliked_exercises": [],
-                        "enjoyed_exercises": [],
-                        "motivation_drivers": [],
-                        "feedback_style": "Direct",
-                        "autonomy_preference": "Medium"
-                    }),
-                    goals=json.dumps({
-                        "primary_goal": profile_data.get('goal', 'Performance Générale'),
-                        "secondary_goals": [],
-                        "target_date": profile_data.get('target_date', '2025-12-31'),
-                        "target_metrics": {},
-                        "milestones": []
-                    }),
-                    constraints=json.dumps({
-                        "time_availability": profile_data.get('availability', []),
-                        "travel_schedule": [],
-                        "work_stress_level": None,
-                        "family_commitments": None,
-                        "budget_constraints": None
-                    })
-                )
+                if 'ai_analysis' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sessions ADD COLUMN ai_analysis TEXT;"))
+                    print("✅ Colonne ai_analysis ajoutée à workout_sessions")
                 
-                db.add(athlete_profile)
-                db.commit()
-                db.refresh(athlete_profile)
+                if 'created_at' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sessions ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();"))
+                    print("✅ Colonne created_at ajoutée à workout_sessions")
+            
+            # Table WORKOUT_SETS
+            if 'workout_sets' in inspector.get_table_names():
+                columns = [col['name'] for col in inspector.get_columns('workout_sets')]
                 
-                # Calculer le pourcentage de complétion
-                athlete_profile.completion_percentage = athlete_profile.calculate_completion()
-                athlete_profile.is_complete = athlete_profile.completion_percentage >= 80
+                if 'rest_seconds' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sets ADD COLUMN rest_seconds INTEGER DEFAULT 0;"))
+                    print("✅ Colonne rest_seconds ajoutée à workout_sets")
                 
-                # Initialiser la mémoire du coach
-                try:
-                    CoachMemoryService.initialize_coach_memory(athlete_profile, db)
-                    migrated_count += 1
-                    logger.info(f"✅ {user.username} migré (complétion: {athlete_profile.completion_percentage}%)")
-                except Exception as e:
-                    logger.error(f"❌ Erreur initialisation mémoire pour {user.username}: {str(e)}")
-                    db.rollback()
-                    error_count += 1
-                
-            except Exception as e:
-                logger.error(f"❌ Erreur migration utilisateur {user.username}: {str(e)}")
-                error_count += 1
-                db.rollback()
-                continue
-        
-        db.commit()
-        
-        logger.info(f"""
-🎉 Migration terminée!
-━━━━━━━━━━━━━━━━━━━━━━
-📊 Statistiques:
-   • Migrés: {migrated_count}
-   • Déjà migrés: {skipped_count}
-   • Erreurs: {error_count}
-   • Total: {len(users)}
-━━━━━━━━━━━━━━━━━━━━━━
-""")
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"💥 Erreur critique de migration: {str(e)}")
-        db.rollback()
-        return False
-    finally:
-        db.close()
+                if 'metric_type' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sets ADD COLUMN metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
+                    print("✅ Colonne metric_type ajoutée à workout_sets")
+            
+            trans.commit()
+            print("✅ Toutes les colonnes manquantes ont été ajoutées")
+            
+        except Exception as e:
+            trans.rollback()
+            print(f"❌ Erreur ajout colonnes: {e}")
+            raise
 
-def create_tables_if_not_exist():
-    """Crée les tables si elles n'existent pas"""
-    logger.info("🏗️  Vérification/Création des tables...")
+def add_constraints(engine):
+    """Ajoute les contraintes de validation"""
+    print("\n🔒 Ajout des contraintes de validation...")
     
-    try:
-        sql_models.Base.metadata.create_all(bind=engine, tables=[
-            sql_models.AthleteProfile.__table__,
-            sql_models.CoachMemory.__table__
-        ])
-        logger.info("✅ Tables vérifiées/créées")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Erreur création tables: {str(e)}")
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            # Contrainte feed_items.priority
+            conn.execute(text("""
+                ALTER TABLE feed_items 
+                ADD CONSTRAINT IF NOT EXISTS check_feed_item_priority 
+                CHECK (priority BETWEEN 1 AND 10);
+            """))
+            print("✅ Contrainte check_feed_item_priority ajoutée")
+            
+            # Contraintes workout_sessions
+            conn.execute(text("""
+                ALTER TABLE workout_sessions 
+                ADD CONSTRAINT IF NOT EXISTS check_rpe_range 
+                CHECK (rpe BETWEEN 0 AND 10);
+            """))
+            print("✅ Contrainte check_rpe_range ajoutée")
+            
+            conn.execute(text("""
+                ALTER TABLE workout_sessions 
+                ADD CONSTRAINT IF NOT EXISTS check_energy_range 
+                CHECK (energy_level BETWEEN 1 AND 10);
+            """))
+            print("✅ Contrainte check_energy_range ajoutée")
+            
+            trans.commit()
+            print("✅ Toutes les contraintes ont été ajoutées")
+            
+        except Exception as e:
+            trans.rollback()
+            print(f"❌ Erreur ajout contraintes: {e}")
+
+def verify_migration(engine):
+    """Vérifie que la migration a réussi"""
+    print("\n🧪 Vérification de la migration...")
+    
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    
+    # Vérifier les tables critiques
+    critical_tables = ['feed_items', 'workout_sessions', 'workout_sets', 'users']
+    missing_tables = [t for t in critical_tables if t not in tables]
+    
+    if missing_tables:
+        print(f"❌ Tables manquantes: {missing_tables}")
         return False
+    
+    # Vérifier les colonnes critiques
+    critical_columns = {
+        'workout_sessions': ['ai_analysis', 'energy_level'],
+        'workout_sets': ['metric_type', 'rest_seconds'],
+        'feed_items': ['type', 'title', 'message', 'priority']
+    }
+    
+    for table, columns in critical_columns.items():
+        if table in tables:
+            table_columns = [col['name'] for col in inspector.get_columns(table)]
+            missing = [col for col in columns if col not in table_columns]
+            if missing:
+                print(f"❌ Colonnes manquantes dans {table}: {missing}")
+                return False
+    
+    print("✅ Migration vérifiée avec succès !")
+    return True
 
 def main():
     """Fonction principale"""
     print("""
-╔══════════════════════════════════════════╗
-║   MIGRATION TITANFLOW v1 → v2            ║
-╚══════════════════════════════════════════╝
-""")
+    ╔══════════════════════════════════════════════════╗
+    ║       MIGRATION BASE DE DONNÉES TITANFLOW        ║
+    ║            🗃️  Feed & Workouts Schema           ║
+    ╚══════════════════════════════════════════════════╝
+    """)
     
-    # 1. Créer les tables
-    if not create_tables_if_not_exist():
-        print("❌ Échec création tables. Arrêt.")
+    try:
+        # 1. Vérifier l'état actuel
+        engine = check_database_status()
+        
+        # 2. Créer la table feed_items
+        create_feed_items_table(engine)
+        
+        # 3. Ajouter les colonnes manquantes
+        add_missing_columns(engine)
+        
+        # 4. Ajouter les contraintes
+        add_constraints(engine)
+        
+        # 5. Vérifier la migration
+        success = verify_migration(engine)
+        
+        if success:
+            print("\n🎉 MIGRATION TERMINÉE AVEC SUCCÈS !")
+            print("\n📋 RÉSUMÉ:")
+            print("   - ✅ Table feed_items créée")
+            print("   - ✅ Colonnes ai_analysis, energy_level ajoutées")
+            print("   - ✅ Colonnes metric_type, rest_seconds ajoutées")
+            print("   - ✅ Index de performance créés")
+            print("   - ✅ Contraintes de validation ajoutées")
+            print("\n🚀 POUR TESTER:")
+            print("   - Accédez à /health pour vérifier l'état du backend")
+            print("   - Accédez à /fix_db pour forcer la migration via API")
+            print("   - Testez les endpoints: GET /feed/, POST /workouts/")
+        else:
+            print("\n❌ MIGRATION ÉCHOUÉE")
+            print("   Vérifiez les logs ci-dessus")
+            
+    except Exception as e:
+        print(f"\n💥 ERREUR CRITIQUE: {e}")
         sys.exit(1)
-    
-    # 2. Migrer les données
-    print("\n🔁 Migration des données utilisateurs...")
-    if not migrate_existing_users():
-        print("❌ Échec migration données. Vérifiez les logs.")
-        sys.exit(1)
-    
-    print("\n✅ Migration terminée avec succès!")
-    print("   Redémarrez le serveur pour activer les nouvelles fonctionnalités.")
 
 if __name__ == "__main__":
-    main()
--e 
-
--e 
-================================================================================
-📄 FICHIER : backend/remove_cache_decorator.py
-================================================================================
-import re
-
-with open('app/routers/coach.py', 'r') as f:
-    content = f.read()
-
-# Supprimer toutes les occurrences de @cached_response
-new_content = re.sub(r'@cached_response\([^)]*\)\s*\n', '', content)
-
-with open('app/routers/coach.py', 'w') as f:
-    f.write(new_content)
-
-print("✅ Tous les décorateurs @cached_response retirés")
--e 
+    main()-e 
 
 -e 
 ================================================================================
@@ -8072,112 +7687,98 @@ if __name__ == "__main__":
 
 -e 
 ================================================================================
-📄 FICHIER : backend/test_new_endpoints.py
+📄 FICHIER : backend/visualisation_db.py
 ================================================================================
-#!/usr/bin/env python3
-"""
-Script de test pour les nouveaux endpoints
-"""
+import streamlit as st
+import pandas as pd
+from sqlalchemy import create_engine, inspect, text
 
-import requests
-import json
-import sys
+# --- 1. CONFIGURATION ---
+# Votre URL est intégrée ici :
+DB_URL = "postgresql://titanflow_prod_db_user:1VRDWljUne5YD0lczDfcY3gLglcgS3VU@dpg-d5ec3fruibrs738a76a0-a.frankfurt-postgres.render.com/titanflow_prod_db"
 
-# Configuration
-BASE_URL = "http://localhost:8000"
-TOKEN = None  # Remplacer par votre token JWT
+st.set_page_config(
+    page_title="TitanFlow DB Admin", 
+    layout="wide",  # Mode "Large" pour voir toutes les colonnes
+    page_icon="👁️"
+)
 
-def test_endpoint(method, endpoint, data=None):
-    """Test un endpoint et affiche le résultat"""
-    url = f"{BASE_URL}{endpoint}"
-    headers = {"Authorization": f"Bearer {TOKEN}"} if TOKEN else {}
+# CSS pour maximiser l'espace
+st.markdown("""
+<style>
+    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+    div[data-testid="stDataFrame"] { width: 100%; }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("👁️ TitanFlow - Inspecteur de Base de Données")
+
+# --- 2. CONNEXION ---
+try:
+    # Petit nettoyage au cas où (Render donne parfois postgres:// au lieu de postgresql://)
+    if DB_URL.startswith("postgres://"):
+        real_url = DB_URL.replace("postgres://", "postgresql://", 1)
+    else:
+        real_url = DB_URL
+
+    engine = create_engine(real_url)
+    inspector = inspect(engine)
     
-    try:
-        if method == "GET":
-            response = requests.get(url, headers=headers)
-        elif method == "POST":
-            headers["Content-Type"] = "application/json"
-            response = requests.post(url, headers=headers, json=data)
-        elif method == "PUT":
-            headers["Content-Type"] = "application/json"
-            response = requests.put(url, headers=headers, json=data)
-        else:
-            print(f"❌ Méthode non supportée: {method}")
-            return
+    # Test de connexion et récupération des tables
+    all_tables = inspector.get_table_names()
+
+    if not all_tables:
+        st.warning("⚠️ Connexion réussie, mais aucune table trouvée dans la base.")
+    else:
+        # --- 3. SIDEBAR (Navigation) ---
+        st.sidebar.header("📂 Tables disponibles")
         
-        print(f"
-🔍 Test {method} {endpoint}")
-        print(f"   Status Code: {response.status_code}")
+        # Tri : on met les tables importantes en haut
+        priority = ['users', 'athlete_profiles', 'workout_sessions', 'coach_memories']
+        sorted_tables = sorted(all_tables, key=lambda x: (0 if x in priority else 1, x))
         
-        if response.status_code == 200:
-            print(f"   ✅ Succès!")
-            try:
-                result = response.json()
-                print(f"   Réponse: {json.dumps(result, indent=2, ensure_ascii=False)[:200]}...")
-            except:
-                print(f"   Réponse: {response.text[:200]}...")
-        else:
-            print(f"   ❌ Erreur!")
-            print(f"   Message: {response.text}")
-            
-    except Exception as e:
-        print(f"   ❌ Exception: {e}")
+        selected_table = st.sidebar.radio("Sélectionnez une table :", sorted_tables)
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        TOKEN = sys.argv[1]
-    
-    if not TOKEN:
-        print("⚠️  Aucun token fourni. Seuls les endpoints publics seront testés.")
-        print("   Usage: python test_new_endpoints.py <votre_token_jwt>")
-    
-    # Test des nouveaux endpoints
-    print("🧪 TEST DES NOUVEAUX ENDPOINTS")
-    print("=" * 50)
-    
-    # 1. Test GET /user/profile/complete
-    test_endpoint("GET", "/user/profile/complete")
-    
-    # 2. Test POST /user/profile/complete (avec des données d'exemple)
-    sample_profile = {
-        "basic_info": {
-            "pseudo": "test_athlete",
-            "email": "test@example.com",
-            "training_age": 3
-        },
-        "physical_metrics": {
-            "weight": 75.5,
-            "height": 180,
-            "body_fat": 15.0
-        },
-        "sport_context": {
-            "sport": "Rugby",
-            "level": "Intermédiaire",
-            "position": "Demi"
-        }
-    }
-    test_endpoint("POST", "/user/profile/complete", sample_profile)
-    
-    # 3. Test POST /user/profile/sections/basic_info
-    basic_info_update = {
-        "pseudo": "athlete_updated",
-        "email": "updated@example.com",
-        "birth_date": "1990-01-01"
-    }
-    test_endpoint("POST", "/user/profile/sections/basic_info", basic_info_update)
-    
-    # 4. Test POST /user/profile/sections/physical_metrics
-    physical_update = {
-        "weight": 76.0,
-        "height": 180,
-        "body_fat": 14.5
-    }
-    test_endpoint("POST", "/user/profile/sections/physical_metrics", physical_update)
-    
-    print("
-" + "=" * 50)
-    print("✅ Tests terminés!")
--e 
+        st.divider()
+        st.header(f"Table : `{selected_table}`")
+
+        # --- 4. INSPECTION DE LA STRUCTURE (Colonnes) ---
+        # C'est ici qu'on vérifie si les colonnes existent vraiment
+        columns_info = inspector.get_columns(selected_table)
+        col_names = [col['name'] for col in columns_info]
+        
+        st.info(f"📊 La table contient **{len(col_names)} colonnes**.")
+        
+        # Liste déroulante pour vérifier les noms exacts
+        with st.expander("🔎 Cliquez ici pour voir la liste exacte des colonnes (Schéma)"):
+            schema_df = pd.DataFrame([
+                {"Nom": c['name'], "Type": str(c['type']), "Nullable": c['nullable']} 
+                for c in columns_info
+            ])
+            st.table(schema_df)
+
+        # --- 5. AFFICHAGE DES DONNÉES ---
+        st.subheader("Données enregistrées")
+        
+        with engine.connect() as conn:
+            # On récupère tout le contenu
+            query = text(f"SELECT * FROM {selected_table}")
+            df = pd.read_sql(query, conn)
+
+        if df.empty:
+            st.warning("Cette table est vide (0 ligne).")
+        else:
+            # Affichage du tableau interactif
+            st.dataframe(
+                df, 
+                use_container_width=True, 
+                height=600  # Grande hauteur pour le confort
+            )
+
+except Exception as e:
+    st.error("❌ Erreur de connexion")
+    st.error(f"Détails : {e}")
+    st.info("Vérifiez votre connexion internet ou si l'URL a changé.")-e 
 
 -e 
 ================================================================================
