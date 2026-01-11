@@ -6,7 +6,7 @@ from app.models import sql_models, schemas
 from app.dependencies import get_current_user
 import json
 
-# [DEV-CARD #03] Imports du Moteur de Feed
+# Imports du Moteur de Feed
 from app.services.feed.engine import TriggerEngine
 from app.services.feed.triggers.workout_analysis import WorkoutAnalysisTrigger
 
@@ -21,6 +21,13 @@ async def create_workout(
     db: Session = Depends(get_db),
     current_user: sql_models.User = Depends(get_current_user)
 ):
+    """
+    Enregistre une séance complète avec gestion du Polymorphisme (Metric Type).
+    Vérifie la cohérence des données (ex: Watts max, RPE bounds).
+    Supprime le brouillon associé une fois la séance validée.
+    Active le Neural Feed pour l'analyse post-séance.
+    """
+
     # --- VALIDATION PHYSIOLOGIQUE ---
     def validate_physiological_limits(workout: schemas.WorkoutSessionCreate):
         """Valide les limites physiologiques humaines."""
@@ -74,12 +81,6 @@ async def create_workout(
     # Appliquer la validation
     validate_physiological_limits(workout)
 
-    """
-    Enregistre une séance complète avec gestion du Polymorphisme (Metric Type).
-    Vérifie la cohérence des données (ex: Watts max, RPE bounds).
-    [DEV-CARD #05] Supprime le brouillon associé une fois la séance validée.
-    [DEV-CARD #03] Active le Neural Feed pour l'analyse post-séance.
-    """
     # 1. Validation de haut niveau avant insertion
     for s in workout.sets:
         # Validation RPE
@@ -94,18 +95,18 @@ async def create_workout(
                 raise HTTPException(status_code=400, detail=f"Valeur impossible : {s.weight} Watts sur l'exercice {s.exercise_name}. Vérifiez la saisie.")
         
         elif s.metric_type == 'PACE_DISTANCE':
-            # Dans ce mode : weight = Vitesse/Pace (souvent 0 si calculée) ou Distance, reps = Distance ou Temps
             # Standard TitanFlow : Reps = Distance (m), Weight = 0 (ou vitesse m/s)
             if s.reps > 100000: # 100km max par série pour être sûr
                  raise HTTPException(status_code=400, detail=f"Distance suspecte : {s.reps} mètres.")
 
-    # 2. Création de la Session
+    # 2. Création de la Session (INSERT)
     db_workout = sql_models.WorkoutSession(
         date=workout.date,
         duration=workout.duration,
         rpe=workout.rpe,
         energy_level=workout.energy_level,
         notes=workout.notes,
+        ai_analysis=workout.ai_analysis, # <--- AJOUT CRITIQUE POUR BE-03
         user_id=current_user.id
     )
     db.add(db_workout)
@@ -123,23 +124,20 @@ async def create_workout(
                 weight=s.weight, # Déjà nettoyé par Pydantic (float)
                 reps=s.reps,     # Déjà nettoyé par Pydantic (float, secondes inclues)
                 rpe=s.rpe,
-                rest_seconds=s.rest_seconds,
-                metric_type=s.metric_type # Le fameux recording_mode
+                rest_seconds=s.rest_seconds, # <--- DEJA SUPPORTE PAR SQL MODEL
+                metric_type=s.metric_type    # <--- DEJA SUPPORTE PAR SQL MODEL
             )
             db.add(db_set)
         
-        # [DEV-CARD #05] Nettoyage du brouillon après succès
+        # Nettoyage du brouillon après succès
         current_user.draft_workout_data = None
         
         db.commit()
         db.refresh(db_workout)
 
-    # 4. [DEV-CARD #03] TRIGGER NEURAL FEED (L'IA s'active ici)
-    # On lance l'analyse immédiatement (await) pour que le feed soit à jour 
-    # quand l'utilisateur revient sur l'accueil.
+    # 4. TRIGGER NEURAL FEED (L'IA s'active ici)
     try:
-        # [MODIF V2] On passe le profil complet dans le contexte via user_data
-        # On tente de parser le JSON profile_data s'il existe
+        # On passe le profil complet dans le contexte via user_data
         profile_data = {}
         if current_user.profile_data:
             try:
@@ -151,7 +149,7 @@ async def create_workout(
         engine.register(WorkoutAnalysisTrigger())
         await engine.run_all(db, current_user.id, {
             "workout": db_workout,
-            "profile": profile_data # <--- ICI, on injecte les données pour le Bio-Twin
+            "profile": profile_data
         })
     except Exception as e:
         # On ne bloque pas la réponse si l'IA échoue, c'est du bonus

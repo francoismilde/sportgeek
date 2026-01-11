@@ -57,7 +57,6 @@ class AthleteProfileCreate(AthleteProfileBase):
     pass
 
 class AthleteProfileUpdate(AthleteProfileBase):
-    # Tout est optionnel pour permettre des mises à jour partielles
     basic_info: Optional[BasicInfo] = None
     physical_metrics: Optional[PhysicalMetrics] = None
     sport_context: Optional[SportContext] = None
@@ -71,11 +70,10 @@ class AthleteProfileResponse(AthleteProfileBase):
     class Config:
         from_attributes = True
 
-# --- MEMORY SCHEMAS (CORRIGÉ) ---
+# --- MEMORY SCHEMAS ---
 
 class CoachMemoryResponse(BaseModel):
     id: int
-    # CORRECTION ICI : On retire le .get() illégal. L'extraction se fait dans le validateur.
     readiness_score: int = Field(alias="current_context", default=50)
     current_phase: str = "Général"
     flags: Dict[str, bool] = {}
@@ -83,7 +81,6 @@ class CoachMemoryResponse(BaseModel):
     
     @field_validator('readiness_score', mode='before')
     def extract_readiness(cls, v):
-        # C'est ici qu'on extrait la valeur du dict JSON
         if isinstance(v, dict):
             return v.get('readiness_score', 50)
         return v
@@ -91,7 +88,7 @@ class CoachMemoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# --- LEGACY SCHEMAS (WORKOUTS) ---
+# --- WORKOUT SCHEMAS (UPDATED FOR BE-03) ---
 
 class WorkoutSetBase(BaseModel):
     exercise_name: str
@@ -132,6 +129,7 @@ class WorkoutSessionCreate(BaseModel):
     rpe: float
     energy_level: int = 5
     notes: Optional[str] = None
+    ai_analysis: Optional[str] = None # Added for BE-03
     sets: List[WorkoutSetCreate] = []
 
 class WorkoutSetResponse(WorkoutSetBase):
