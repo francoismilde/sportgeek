@@ -71,17 +71,19 @@ class AthleteProfileResponse(AthleteProfileBase):
     class Config:
         from_attributes = True
 
-# --- MEMORY SCHEMAS ---
+# --- MEMORY SCHEMAS (CORRIGÉ) ---
 
 class CoachMemoryResponse(BaseModel):
     id: int
-    readiness_score: int = Field(alias="current_context", default={}).get("readiness_score", 0)
+    # CORRECTION ICI : On retire le .get() illégal. L'extraction se fait dans le validateur.
+    readiness_score: int = Field(alias="current_context", default=50)
     current_phase: str = "Général"
     flags: Dict[str, bool] = {}
     insights: Dict[str, Any] = {}
     
     @field_validator('readiness_score', mode='before')
     def extract_readiness(cls, v):
+        # C'est ici qu'on extrait la valeur du dict JSON
         if isinstance(v, dict):
             return v.get('readiness_score', 50)
         return v
