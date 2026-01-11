@@ -262,3 +262,12 @@ class GoalProgressUpdate(BaseModel):
     progress_value: int
     progress_note: Optional[str] = None
     achieved: bool = False
+
+# --- HOTFIX: MISSING SCHEMAS ADDED ---
+
+class AthleteProfileUpdate(AthleteProfileBase):
+    pass
+
+class ProfileSectionUpdate(BaseModel):
+    section_data: Dict[str, Any]
+
