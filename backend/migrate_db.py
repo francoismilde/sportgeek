@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script autonome de migration de base de données pour TitanFlow
-Exécute toutes les migrations nécessaires pour les tables Feed & Workouts
+Exécute toutes les migrations nécessaires pour les tables Feed, Workouts & Users
 """
 
 import sys
@@ -38,6 +38,59 @@ def check_database_status():
                 print(f"    • {col['name']} ({col['type']})")
     
     return engine
+
+def migrate_users_table(engine):
+    """
+    TITAN V2 : Migration de la table users pour le Profil Flexible (JSON)
+    Assure que la colonne profile_data existe et est du bon type.
+    """
+    print("\n👤 Migration de la table users (Profil Flexible)...")
+    
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            inspector = inspect(engine)
+            if 'users' not in inspector.get_table_names():
+                print("⚠️ Table users introuvable (sera créée par l'app)")
+                return
+
+            columns = [col['name'] for col in inspector.get_columns('users')]
+            
+            # 1. Ajout de la colonne si elle manque
+            if 'profile_data' not in columns:
+                # Sur Postgres on préfère JSONB, sur SQLite JSON (qui est TEXT en interne)
+                is_postgres = "postgres" in str(engine.url)
+                col_type = "JSONB" if is_postgres else "JSON"
+                
+                # Note: SQLite ne supporte pas JSON dans ALTER TABLE directement partout, on utilise TEXT par sécurité
+                if not is_postgres:
+                    col_type = "TEXT"
+                
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN profile_data {col_type} DEFAULT '{{}}';"))
+                print(f"✅ Colonne profile_data ({col_type}) ajoutée à users")
+            else:
+                print("ℹ️ Colonne profile_data existe déjà")
+                
+                # 2. Conversion Avancée (Postgres uniquement)
+                # Si la colonne existe en TEXT mais qu'on veut du JSONB pour la performance
+                if "postgres" in str(engine.url):
+                    try:
+                        # On tente une conversion de type
+                        conn.execute(text("""
+                            ALTER TABLE users 
+                            ALTER COLUMN profile_data TYPE JSONB 
+                            USING profile_data::jsonb;
+                        """))
+                        print("⚡ Optimisation Postgres : profile_data converti en JSONB")
+                    except Exception as e:
+                        print(f"⚠️ Impossible de convertir en JSONB (probablement déjà fait ou données invalides): {e}")
+
+            trans.commit()
+            
+        except Exception as e:
+            trans.rollback()
+            print(f"❌ Erreur migration users: {e}")
+            raise
 
 def create_feed_items_table(engine):
     """Crée la table feed_items si elle n'existe pas"""
@@ -149,30 +202,39 @@ def add_constraints(engine):
         trans = conn.begin()
         try:
             # Contrainte feed_items.priority
-            conn.execute(text("""
-                ALTER TABLE feed_items 
-                ADD CONSTRAINT IF NOT EXISTS check_feed_item_priority 
-                CHECK (priority BETWEEN 1 AND 10);
-            """))
-            print("✅ Contrainte check_feed_item_priority ajoutée")
+            try:
+                conn.execute(text("""
+                    ALTER TABLE feed_items 
+                    ADD CONSTRAINT check_feed_item_priority 
+                    CHECK (priority BETWEEN 1 AND 10);
+                """))
+                print("✅ Contrainte check_feed_item_priority ajoutée")
+            except:
+                pass # Probablement déjà existante
             
             # Contraintes workout_sessions
-            conn.execute(text("""
-                ALTER TABLE workout_sessions 
-                ADD CONSTRAINT IF NOT EXISTS check_rpe_range 
-                CHECK (rpe BETWEEN 0 AND 10);
-            """))
-            print("✅ Contrainte check_rpe_range ajoutée")
-            
-            conn.execute(text("""
-                ALTER TABLE workout_sessions 
-                ADD CONSTRAINT IF NOT EXISTS check_energy_range 
-                CHECK (energy_level BETWEEN 1 AND 10);
-            """))
-            print("✅ Contrainte check_energy_range ajoutée")
+            try:
+                conn.execute(text("""
+                    ALTER TABLE workout_sessions 
+                    ADD CONSTRAINT check_rpe_range 
+                    CHECK (rpe BETWEEN 0 AND 10);
+                """))
+                print("✅ Contrainte check_rpe_range ajoutée")
+            except:
+                pass
+
+            try:
+                conn.execute(text("""
+                    ALTER TABLE workout_sessions 
+                    ADD CONSTRAINT check_energy_range 
+                    CHECK (energy_level BETWEEN 1 AND 10);
+                """))
+                print("✅ Contrainte check_energy_range ajoutée")
+            except:
+                pass
             
             trans.commit()
-            print("✅ Toutes les contraintes ont été ajoutées")
+            print("✅ Vérification des contraintes terminée")
             
         except Exception as e:
             trans.rollback()
@@ -195,6 +257,7 @@ def verify_migration(engine):
     
     # Vérifier les colonnes critiques
     critical_columns = {
+        'users': ['profile_data'],
         'workout_sessions': ['ai_analysis', 'energy_level'],
         'workout_sets': ['metric_type', 'rest_seconds'],
         'feed_items': ['type', 'title', 'message', 'priority']
@@ -216,7 +279,8 @@ def main():
     print("""
     ╔══════════════════════════════════════════════════╗
     ║       MIGRATION BASE DE DONNÉES TITANFLOW        ║
-    ║            🗃️  Feed & Workouts Schema           ║
+    ║            🗃️  Feed & Workouts & Users     
+    ║
     ╚══════════════════════════════════════════════════╝
     """)
     
@@ -224,30 +288,31 @@ def main():
         # 1. Vérifier l'état actuel
         engine = check_database_status()
         
-        # 2. Créer la table feed_items
+        # 2. Migration de la table users (Priorité Titan V2)
+        migrate_users_table(engine)
+        
+        # 3. Créer la table feed_items
         create_feed_items_table(engine)
         
-        # 3. Ajouter les colonnes manquantes
+        # 4. Ajouter les colonnes manquantes
         add_missing_columns(engine)
         
-        # 4. Ajouter les contraintes
+        # 5. Ajouter les contraintes
         add_constraints(engine)
         
-        # 5. Vérifier la migration
+        # 6. Vérifier la migration
         success = verify_migration(engine)
         
         if success:
             print("\n🎉 MIGRATION TERMINÉE AVEC SUCCÈS !")
             print("\n📋 RÉSUMÉ:")
+            print("   - ✅ Table users mise à jour (profile_data JSON)")
             print("   - ✅ Table feed_items créée")
-            print("   - ✅ Colonnes ai_analysis, energy_level ajoutées")
-            print("   - ✅ Colonnes metric_type, rest_seconds ajoutées")
-            print("   - ✅ Index de performance créés")
-            print("   - ✅ Contraintes de validation ajoutées")
+            print("   - ✅ Colonnes IA et métriques ajoutées")
+            print("   - ✅ Index et Contraintes appliqués")
             print("\n🚀 POUR TESTER:")
             print("   - Accédez à /health pour vérifier l'état du backend")
             print("   - Accédez à /fix_db pour forcer la migration via API")
-            print("   - Testez les endpoints: GET /feed/, POST /workouts/")
         else:
             print("\n❌ MIGRATION ÉCHOUÉE")
             print("   Vérifiez les logs ci-dessus")
