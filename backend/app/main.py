@@ -1,85 +1,8 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-import logging
-from sqlalchemy import text 
-
-# --- IMPORTS DES ROUTEURS ---
-from .routers import (
-    performance, 
-    safety, 
-    auth, 
-    workouts, 
-    coach, 
-    user, 
-    feed, 
-    profiles, 
-    athlete_profiles, 
-    coach_memories
-)
-from app.core.database import engine, Base
-
-# Configuration des logs
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# --- DATABASE INIT ---
-try:
-    logger.info("Tentative de création des tables SQL...")
-    Base.metadata.create_all(bind=engine)
-    logger.info("Tables vérifiées/créées.")
-except Exception as e:
-    logger.error(f"ERREUR CRITIQUE DÉMARRAGE DB : {e}")
-
-app = FastAPI(
-    title="TitanFlow API",
-    description="API Backend pour l'application TitanFlow",
-    version="2.1.0", # Bump version pour Migration V2
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
-
-# Configuration CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- GLOBAL EXCEPTION HANDLER (ANTI-CRASH) ---
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"🔥 CRASH GLOBAL NON GÉRÉ : {str(exc)}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": f"Erreur serveur interne (TitanFlow Panic): {str(exc)}"},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "*",
-            "Access-Control-Allow-Headers": "*",
-        },
-    )
-
-# --- ROUTEURS ---
-app.include_router(auth.router)
-app.include_router(workouts.router)
-app.include_router(performance.router)
-app.include_router(safety.router)
-app.include_router(coach.router)
-app.include_router(user.router)
-app.include_router(feed.router)
-app.include_router(profiles.router)
-app.include_router(athlete_profiles.router)
-app.include_router(coach_memories.router)
-
-# --- ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V5 - MIGRATION COMPLETE) ---
+# ROUTE SPÉCIALE DE RÉPARATION (SELF-REPAIR V6 - COMPLÉTION SCHÉMA)
 @app.get("/fix_db", tags=["System"])
 def fix_database_schema():
     """
-    🛠️ ROUTE D'URGENCE V5 : Création des tables V2 + Patch des colonnes.
-    Lancez cette URL pour mettre à jour la BDD sur Render.
+    🛠️ ROUTE D'URGENCE V6 : Création complète des tables + Index + Foreign Keys.
     """
     try:
         with engine.connect() as connection:
@@ -123,8 +46,40 @@ def fix_database_schema():
                     last_updated TIMESTAMPTZ DEFAULT NOW()
                 );
             """))
-
-            # 2. PATCH DES TABLES EXISTANTES (Colonnes manquantes)
+            
+            # Table Feed Items (CRITIQUE pour le Neural Feed)
+            connection.execute(text("""
+                CREATE TABLE IF NOT EXISTS feed_items (
+                    id VARCHAR PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    type VARCHAR NOT NULL,
+                    title VARCHAR NOT NULL,
+                    message VARCHAR NOT NULL,
+                    action_payload TEXT,
+                    is_read BOOLEAN DEFAULT FALSE,
+                    is_completed BOOLEAN DEFAULT FALSE,
+                    priority INTEGER DEFAULT 1,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """))
+            
+            # 2. CRÉATION DES INDEX POUR PERFORMANCE
+            connection.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_feed_items_user_id 
+                ON feed_items(user_id) WHERE is_completed = FALSE;
+            """))
+            
+            connection.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_feed_items_type 
+                ON feed_items(type);
+            """))
+            
+            connection.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_feed_items_priority_created 
+                ON feed_items(priority DESC, created_at DESC);
+            """))
+            
+            # 3. PATCH DES TABLES EXISTANTES (Colonnes manquantes)
             
             # Table USERS
             connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR UNIQUE;"))
@@ -133,35 +88,55 @@ def fix_database_schema():
             connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"))
             connection.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"))
 
-            # Table WORKOUT_SESSIONS
+            # Table WORKOUT_SESSIONS (Colonnes pour l'analyse IA)
             connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS energy_level INTEGER DEFAULT 5;"))
             connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS notes TEXT;"))
             connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();"))
             connection.execute(text("ALTER TABLE workout_sessions ADD COLUMN IF NOT EXISTS ai_analysis TEXT;"))
             
-            # Table WORKOUT_SETS
+            # Table WORKOUT_SETS (Colonnes pour le polymorphisme des métriques)
             connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
             connection.execute(text("ALTER TABLE workout_sets ADD COLUMN IF NOT EXISTS rest_seconds INTEGER DEFAULT 0;"))
             
+            # 4. CONTRAINTES DE SÉCURITÉ SUPPLÉMENTAIRES
+            connection.execute(text("""
+                ALTER TABLE feed_items 
+                ADD CONSTRAINT check_feed_item_priority 
+                CHECK (priority BETWEEN 1 AND 10);
+            """))
+            
+            connection.execute(text("""
+                ALTER TABLE workout_sessions 
+                ADD CONSTRAINT check_rpe_range 
+                CHECK (rpe BETWEEN 0 AND 10);
+            """))
+            
+            connection.execute(text("""
+                ALTER TABLE workout_sessions 
+                ADD CONSTRAINT check_energy_range 
+                CHECK (energy_level BETWEEN 1 AND 10);
+            """))
+            
             trans.commit()
+            
+            # 5. VÉRIFICATION POST-MIGRATION
+            inspector = inspect(engine)
+            tables = inspector.get_table_names()
+            
             return {
                 "status": "SUCCESS", 
-                "message": "✅ Base de données migrée : Tables 'athlete_profiles' et 'coach_memories' créées + Colonnes ajoutées !"
+                "message": "✅ Base de données migrée V6 avec succès !",
+                "tables_created": [
+                    "athlete_profiles" if "athlete_profiles" in tables else "❌",
+                    "coach_memories" if "coach_memories" in tables else "❌",
+                    "feed_items" if "feed_items" in tables else "❌"
+                ],
+                "missing_columns_fixed": [
+                    "users.email ✅" if "email" in [col['name'] for col in inspector.get_columns('users')] else "❌",
+                    "workout_sessions.ai_analysis ✅" if "ai_analysis" in [col['name'] for col in inspector.get_columns('workout_sessions')] else "❌",
+                    "workout_sets.metric_type ✅" if "metric_type" in [col['name'] for col in inspector.get_columns('workout_sets')] else "❌"
+                ]
             }
             
     except Exception as e:
         return {"status": "ERROR", "message": f"❌ Erreur lors de la migration : {str(e)}"}
-
-
-@app.get("/health", tags=["Health Check"])
-async def health_check():
-    return {
-        "status": "active",
-        "version": "2.1.0",
-        "service": "TitanFlow Backend",
-        "database": "connected"
-    }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

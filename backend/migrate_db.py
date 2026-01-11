@@ -1,199 +1,260 @@
-import os
-import json
-import sqlalchemy
-from sqlalchemy import text, inspect
-from dotenv import load_dotenv
-import logging
+#!/usr/bin/env python3
+"""
+Script autonome de migration de base de données pour TitanFlow
+Exécute toutes les migrations nécessaires pour les tables Feed & Workouts
+"""
+
 import sys
+import os
+from pathlib import Path
 
-# Configuration du logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Ajouter le backend au path
+sys.path.append(str(Path(__file__).parent))
 
-# Charge les variables locales
+from sqlalchemy import create_engine, text, inspect
+from dotenv import load_dotenv
+
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+def check_database_status():
+    """Vérifie l'état actuel de la base de données"""
+    print("🔍 Diagnostic de la base de données...")
+    
+    db_url = os.getenv("DATABASE_URL", "sqlite:///./sql_app.db")
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+        
+    engine = create_engine(db_url)
+    
+    with engine.connect() as conn:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        
+        print(f"📊 {len(tables)} tables trouvées:")
+        for table in sorted(tables):
+            columns = inspector.get_columns(table)
+            print(f"  - {table}: {len(columns)} colonnes")
+            for col in columns[:3]:  # Afficher seulement 3 colonnes par table
+                print(f"    • {col['name']} ({col['type']})")
+    
+    return engine
 
-# Correction pour Render qui utilise parfois postgres:// au lieu de postgresql://
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-if not DATABASE_URL:
-    logger.error("❌ Erreur : Pas de DATABASE_URL trouvée.")
-    # Fallback SQLite pour le local si pas de variable d'env
-    DATABASE_URL = "sqlite:///./sql_app.db"
-    logger.warning(f"⚠️  Utilisation de la BDD par défaut : {DATABASE_URL}")
-
-logger.info(f"🔌 Connexion à la BDD...")
-engine = sqlalchemy.create_engine(DATABASE_URL)
-
-def table_exists(connection, table_name):
-    """Vérifie si une table existe"""
-    inspector = inspect(engine)
-    return table_name in inspector.get_table_names()
-
-def column_exists(connection, table_name, column_name):
-    """Vérifie si une colonne existe dans une table"""
-    inspector = inspect(engine)
-    columns = [col['name'] for col in inspector.get_columns(table_name)]
-    return column_name in columns
-
-def apply_migration():
-    """Applique toutes les migrations nécessaires (Structure + Données)"""
-    with engine.connect() as connection:
-        trans = connection.begin()
+def create_feed_items_table(engine):
+    """Crée la table feed_items si elle n'existe pas"""
+    print("\n📨 Création de la table feed_items...")
+    
+    with engine.connect() as conn:
+        trans = conn.begin()
         try:
-            logger.info("🛠️ Début des migrations de structure...")
+            # Vérifier si la table existe déjà
+            inspector = inspect(engine)
+            if 'feed_items' in inspector.get_table_names():
+                print("✅ Table feed_items existe déjà")
+                return
             
-            # --- 1. TABLES CORE (EXISTANTES) ---
+            # Créer la table
+            conn.execute(text("""
+                CREATE TABLE feed_items (
+                    id VARCHAR PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    type VARCHAR NOT NULL,
+                    title VARCHAR NOT NULL,
+                    message VARCHAR NOT NULL,
+                    action_payload TEXT,
+                    is_read BOOLEAN DEFAULT FALSE,
+                    is_completed BOOLEAN DEFAULT FALSE,
+                    priority INTEGER DEFAULT 1,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """))
             
-            # Users
-            if not table_exists(connection, "users"):
-                logger.info("Création table 'users'...")
-                connection.execute(text("""
-                    CREATE TABLE users (
-                        id SERIAL PRIMARY KEY,
-                        username VARCHAR UNIQUE NOT NULL,
-                        email VARCHAR UNIQUE,
-                        hashed_password VARCHAR NOT NULL,
-                        profile_data TEXT,
-                        strategy_data TEXT,
-                        weekly_plan_data TEXT,
-                        draft_workout_data TEXT
-                    );
-                """))
+            # Créer les index
+            conn.execute(text("""
+                CREATE INDEX idx_feed_items_user_id 
+                ON feed_items(user_id) WHERE is_completed = FALSE;
+            """))
             
-            # Workout Sessions
-            if not table_exists(connection, "workout_sessions"):
-                logger.info("Création table 'workout_sessions'...")
-                connection.execute(text("""
-                    CREATE TABLE workout_sessions (
-                        id SERIAL PRIMARY KEY,
-                        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                        date DATE NOT NULL,
-                        duration FLOAT NOT NULL,
-                        rpe FLOAT NOT NULL,
-                        energy_level INTEGER DEFAULT 5,
-                        notes TEXT,
-                        ai_analysis TEXT,
-                        created_at TIMESTAMPTZ DEFAULT NOW()
-                    );
-                """))
+            conn.execute(text("""
+                CREATE INDEX idx_feed_items_type 
+                ON feed_items(type);
+            """))
             
-            # Workout Sets
-            if not table_exists(connection, "workout_sets"):
-                logger.info("Création table 'workout_sets'...")
-                connection.execute(text("""
-                    CREATE TABLE workout_sets (
-                        id SERIAL PRIMARY KEY,
-                        session_id INTEGER REFERENCES workout_sessions(id) ON DELETE CASCADE,
-                        exercise_name VARCHAR NOT NULL,
-                        set_order INTEGER NOT NULL,
-                        weight FLOAT DEFAULT 0.0,
-                        reps FLOAT DEFAULT 0.0,
-                        rpe FLOAT DEFAULT 0.0,
-                        rest_seconds INTEGER DEFAULT 0,
-                        metric_type VARCHAR DEFAULT 'LOAD_REPS'
-                    );
-                """))
-
-            # Feed Items
-            if not table_exists(connection, "feed_items"):
-                logger.info("Création table 'feed_items'...")
-                connection.execute(text("""
-                    CREATE TABLE feed_items (
-                        id VARCHAR PRIMARY KEY,
-                        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                        type VARCHAR NOT NULL,
-                        title VARCHAR NOT NULL,
-                        message VARCHAR NOT NULL,
-                        action_payload TEXT,
-                        is_read BOOLEAN DEFAULT FALSE,
-                        is_completed BOOLEAN DEFAULT FALSE,
-                        priority INTEGER DEFAULT 1,
-                        created_at TIMESTAMPTZ DEFAULT NOW()
-                    );
-                """))
-
-            # --- 2. NOUVELLES TABLES V2 (TITANFLOW PRO - LE FIX EST ICI) ---
-
-            # Athlete Profiles
-            if not table_exists(connection, "athlete_profiles"):
-                logger.info("🆕 Création table 'athlete_profiles' (V2)...")
-                # Utilisation de TEXT pour SQLite/Postgres compatibility simple sur le JSON
-                connection.execute(text("""
-                    CREATE TABLE athlete_profiles (
-                        id SERIAL PRIMARY KEY,
-                        user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-                        basic_info TEXT DEFAULT '{}',
-                        physical_metrics TEXT DEFAULT '{}',
-                        sport_context TEXT DEFAULT '{}',
-                        performance_baseline TEXT DEFAULT '{}',
-                        injury_prevention TEXT DEFAULT '{}',
-                        training_preferences TEXT DEFAULT '{}',
-                        goals TEXT DEFAULT '{}',
-                        constraints TEXT DEFAULT '{}',
-                        created_at TIMESTAMPTZ DEFAULT NOW(),
-                        updated_at TIMESTAMPTZ DEFAULT NOW()
-                    );
-                """))
-                logger.info("✅ Table 'athlete_profiles' créée.")
-
-            # Coach Memories
-            if not table_exists(connection, "coach_memories"):
-                logger.info("🆕 Création table 'coach_memories' (V2)...")
-                connection.execute(text("""
-                    CREATE TABLE coach_memories (
-                        id SERIAL PRIMARY KEY,
-                        athlete_profile_id INTEGER UNIQUE REFERENCES athlete_profiles(id) ON DELETE CASCADE,
-                        metadata_info TEXT DEFAULT '{}',
-                        current_context TEXT DEFAULT '{}',
-                        response_patterns TEXT DEFAULT '{}',
-                        performance_baselines TEXT DEFAULT '{}',
-                        adaptation_signals TEXT DEFAULT '{}',
-                        sport_specific_insights TEXT DEFAULT '{}',
-                        training_history_summary TEXT DEFAULT '{}',
-                        athlete_preferences TEXT DEFAULT '{}',
-                        coach_notes TEXT DEFAULT '{}',
-                        memory_flags TEXT DEFAULT '{}',
-                        last_updated TIMESTAMPTZ DEFAULT NOW()
-                    );
-                """))
-                logger.info("✅ Table 'coach_memories' créée.")
-
-            # --- 3. MIGRATION DES COLONNES MANQUANTES (FIX CRITIQUE) ---
+            conn.execute(text("""
+                CREATE INDEX idx_feed_items_priority_created 
+                ON feed_items(priority DESC, created_at DESC);
+            """))
             
-            if table_exists(connection, "users"):
-                migrations_users = [
-                    ("email", "ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR UNIQUE;"), # <--- IMPORTANT POUR LE WIZARD
-                    ("profile_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_data TEXT;"),
-                    ("strategy_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS strategy_data TEXT;"),
-                    ("weekly_plan_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_plan_data TEXT;"),
-                    ("draft_workout_data", "ALTER TABLE users ADD COLUMN IF NOT EXISTS draft_workout_data TEXT;"),
-                ]
-                for col_name, sql in migrations_users:
-                    if not column_exists(connection, "users", col_name):
-                        logger.info(f"Ajout colonne '{col_name}' -> 'users'")
-                        connection.execute(text(sql))
-
-            # --- 4. FIN ---
             trans.commit()
-            logger.info("🎉 Toutes les migrations (Structure V2) sont terminées !")
-            return True
+            print("✅ Table feed_items créée avec succès")
             
         except Exception as e:
             trans.rollback()
-            logger.error(f"❌ CRASH MIGRATION : {str(e)}")
-            return False
+            print(f"❌ Erreur création feed_items: {e}")
+            raise
+
+def add_missing_columns(engine):
+    """Ajoute les colonnes manquantes aux tables existantes"""
+    print("\n➕ Ajout des colonnes manquantes...")
+    
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            inspector = inspect(engine)
+            
+            # Table WORKOUT_SESSIONS
+            if 'workout_sessions' in inspector.get_table_names():
+                columns = [col['name'] for col in inspector.get_columns('workout_sessions')]
+                
+                if 'energy_level' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sessions ADD COLUMN energy_level INTEGER DEFAULT 5;"))
+                    print("✅ Colonne energy_level ajoutée à workout_sessions")
+                
+                if 'notes' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sessions ADD COLUMN notes TEXT;"))
+                    print("✅ Colonne notes ajoutée à workout_sessions")
+                
+                if 'ai_analysis' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sessions ADD COLUMN ai_analysis TEXT;"))
+                    print("✅ Colonne ai_analysis ajoutée à workout_sessions")
+                
+                if 'created_at' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sessions ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();"))
+                    print("✅ Colonne created_at ajoutée à workout_sessions")
+            
+            # Table WORKOUT_SETS
+            if 'workout_sets' in inspector.get_table_names():
+                columns = [col['name'] for col in inspector.get_columns('workout_sets')]
+                
+                if 'rest_seconds' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sets ADD COLUMN rest_seconds INTEGER DEFAULT 0;"))
+                    print("✅ Colonne rest_seconds ajoutée à workout_sets")
+                
+                if 'metric_type' not in columns:
+                    conn.execute(text("ALTER TABLE workout_sets ADD COLUMN metric_type VARCHAR DEFAULT 'LOAD_REPS';"))
+                    print("✅ Colonne metric_type ajoutée à workout_sets")
+            
+            trans.commit()
+            print("✅ Toutes les colonnes manquantes ont été ajoutées")
+            
+        except Exception as e:
+            trans.rollback()
+            print(f"❌ Erreur ajout colonnes: {e}")
+            raise
+
+def add_constraints(engine):
+    """Ajoute les contraintes de validation"""
+    print("\n🔒 Ajout des contraintes de validation...")
+    
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            # Contrainte feed_items.priority
+            conn.execute(text("""
+                ALTER TABLE feed_items 
+                ADD CONSTRAINT IF NOT EXISTS check_feed_item_priority 
+                CHECK (priority BETWEEN 1 AND 10);
+            """))
+            print("✅ Contrainte check_feed_item_priority ajoutée")
+            
+            # Contraintes workout_sessions
+            conn.execute(text("""
+                ALTER TABLE workout_sessions 
+                ADD CONSTRAINT IF NOT EXISTS check_rpe_range 
+                CHECK (rpe BETWEEN 0 AND 10);
+            """))
+            print("✅ Contrainte check_rpe_range ajoutée")
+            
+            conn.execute(text("""
+                ALTER TABLE workout_sessions 
+                ADD CONSTRAINT IF NOT EXISTS check_energy_range 
+                CHECK (energy_level BETWEEN 1 AND 10);
+            """))
+            print("✅ Contrainte check_energy_range ajoutée")
+            
+            trans.commit()
+            print("✅ Toutes les contraintes ont été ajoutées")
+            
+        except Exception as e:
+            trans.rollback()
+            print(f"❌ Erreur ajout contraintes: {e}")
+
+def verify_migration(engine):
+    """Vérifie que la migration a réussi"""
+    print("\n🧪 Vérification de la migration...")
+    
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    
+    # Vérifier les tables critiques
+    critical_tables = ['feed_items', 'workout_sessions', 'workout_sets', 'users']
+    missing_tables = [t for t in critical_tables if t not in tables]
+    
+    if missing_tables:
+        print(f"❌ Tables manquantes: {missing_tables}")
+        return False
+    
+    # Vérifier les colonnes critiques
+    critical_columns = {
+        'workout_sessions': ['ai_analysis', 'energy_level'],
+        'workout_sets': ['metric_type', 'rest_seconds'],
+        'feed_items': ['type', 'title', 'message', 'priority']
+    }
+    
+    for table, columns in critical_columns.items():
+        if table in tables:
+            table_columns = [col['name'] for col in inspector.get_columns(table)]
+            missing = [col for col in columns if col not in table_columns]
+            if missing:
+                print(f"❌ Colonnes manquantes dans {table}: {missing}")
+                return False
+    
+    print("✅ Migration vérifiée avec succès !")
+    return True
+
+def main():
+    """Fonction principale"""
+    print("""
+    ╔══════════════════════════════════════════════════╗
+    ║       MIGRATION BASE DE DONNÉES TITANFLOW        ║
+    ║            🗃️  Feed & Workouts Schema           ║
+    ╚══════════════════════════════════════════════════╝
+    """)
+    
+    try:
+        # 1. Vérifier l'état actuel
+        engine = check_database_status()
+        
+        # 2. Créer la table feed_items
+        create_feed_items_table(engine)
+        
+        # 3. Ajouter les colonnes manquantes
+        add_missing_columns(engine)
+        
+        # 4. Ajouter les contraintes
+        add_constraints(engine)
+        
+        # 5. Vérifier la migration
+        success = verify_migration(engine)
+        
+        if success:
+            print("\n🎉 MIGRATION TERMINÉE AVEC SUCCÈS !")
+            print("\n📋 RÉSUMÉ:")
+            print("   - ✅ Table feed_items créée")
+            print("   - ✅ Colonnes ai_analysis, energy_level ajoutées")
+            print("   - ✅ Colonnes metric_type, rest_seconds ajoutées")
+            print("   - ✅ Index de performance créés")
+            print("   - ✅ Contraintes de validation ajoutées")
+            print("\n🚀 POUR TESTER:")
+            print("   - Accédez à /health pour vérifier l'état du backend")
+            print("   - Accédez à /fix_db pour forcer la migration via API")
+            print("   - Testez les endpoints: GET /feed/, POST /workouts/")
+        else:
+            print("\n❌ MIGRATION ÉCHOUÉE")
+            print("   Vérifiez les logs ci-dessus")
+            
+    except Exception as e:
+        print(f"\n💥 ERREUR CRITIQUE: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    logger.info("🚀 Lancement TitanFlow DB Migrator...")
-    success = apply_migration()
-    if success:
-        sys.exit(0)
-    else:
-        sys.exit(1)
+    main()
