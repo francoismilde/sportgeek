@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-from sqlalchemy import text, inspect
+from sqlalchemy import text, inspect, create_engine
 from datetime import datetime
 
 # --- IMPORTS DES ROUTEURS ---
@@ -14,22 +14,18 @@ from .routers import (
     coach, 
     user, 
     feed, 
-    # profiles,          <-- DÉSACTIVÉ (Legacy)
-    # athlete_profiles,  <-- DÉSACTIVÉ (Legacy)
-    # coach_memories     <-- DÉSACTIVÉ (Legacy)
 )
 from app.core.database import engine, Base
-# Import des modèles pour que SQLAlchemy les reconnaisse
+# Import des modèles
 from app.models import sql_models 
 
 # Configuration des logs
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- DATABASE INIT (SÉCURISÉ) ---
+# --- DATABASE INIT ---
 try:
     # create_all est SÛR : il ne fait rien si les tables existent déjà.
-    # Il ne modifie pas les colonnes existantes.
     Base.metadata.create_all(bind=engine)
     logger.info("✅ Tables SQL vérifiées.")
 except Exception as e:
@@ -38,7 +34,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="2.3.0", 
+    version="2.4.1", 
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -64,8 +60,19 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # --- ROUTEURS ACTIFS ---
+
+# 1. Auth (inchangé)
 app.include_router(auth.router)
-app.include_router(user.router)
+
+# 2. Profiles (CORRECTIF ROUTING 404)
+# On mappe le routeur user sur l'URL attendue par Flutter
+app.include_router(
+    user.router, 
+    prefix="/api/v1/profiles", 
+    tags=["Profiles"]
+)
+
+# 3. Autres features
 app.include_router(workouts.router)
 app.include_router(performance.router)
 app.include_router(safety.router)
@@ -78,7 +85,7 @@ app.include_router(feed.router)
 async def health_check():
     return {
         "status": "active",
-        "version": "2.3.0",
+        "version": "2.4.1",
         "database": "connected"
     }
 
@@ -89,7 +96,6 @@ async def database_status():
         inspector = inspect(engine)
         tables = inspector.get_table_names()
         
-        # Vérification spécifique pour la colonne profile_data
         columns_user = []
         if 'users' in tables:
             columns_user = [c['name'] for c in inspector.get_columns('users')]
@@ -97,12 +103,71 @@ async def database_status():
         return {
             "status": "success",
             "tables": tables,
-            "users_columns": columns_user,
             "json_profile_ready": 'profile_data' in columns_user,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@app.get("/system/migrate", tags=["System"])
+async def run_surgical_migration():
+    """
+    🚑 MIGRATION CHIRURGICALE (Via API)
+    """
+    try:
+        logs = []
+        with engine.connect() as conn:
+            trans = conn.begin()
+            try:
+                inspector = inspect(engine)
+                existing_tables = inspector.get_table_names()
+                
+                # 1. Users & JSON
+                if 'users' in existing_tables:
+                    cols = [c['name'] for c in inspector.get_columns('users')]
+                    if 'profile_data' not in cols:
+                        is_postgres = "postgres" in str(engine.url)
+                        col_type = "JSONB" if is_postgres else "JSON"
+                        if not is_postgres: col_type = "TEXT" 
+
+                        conn.execute(text(f"ALTER TABLE users ADD COLUMN profile_data {col_type} DEFAULT '{{}}'"))
+                        logs.append(f"✅ Colonne profile_data ({col_type}) ajoutée.")
+                    else:
+                        logs.append("ℹ️ Colonne profile_data déjà présente.")
+                
+                # 2. Nettoyage
+                for old_table in ['coach_memories', 'athlete_profiles']:
+                    if old_table in existing_tables:
+                        conn.execute(text(f"DROP TABLE {old_table} CASCADE"))
+                        logs.append(f"🗑️ Table {old_table} supprimée.")
+                
+                # 3. Feed Items
+                if 'feed_items' not in existing_tables:
+                    conn.execute(text("""
+                        CREATE TABLE feed_items (
+                            id VARCHAR PRIMARY KEY,
+                            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                            type VARCHAR NOT NULL,
+                            title VARCHAR NOT NULL,
+                            message VARCHAR NOT NULL,
+                            action_payload TEXT,
+                            is_read BOOLEAN DEFAULT FALSE,
+                            is_completed BOOLEAN DEFAULT FALSE,
+                            priority INTEGER DEFAULT 1,
+                            created_at TIMESTAMPTZ DEFAULT NOW()
+                        );
+                    """))
+                    logs.append("✅ Table feed_items créée.")
+                
+                trans.commit()
+                return {"status": "SUCCESS", "logs": logs}
+                
+            except Exception as inner_e:
+                trans.rollback()
+                raise inner_e
+                
+    except Exception as e:
+        return {"status": "ERROR", "detail": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
