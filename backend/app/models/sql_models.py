@@ -11,8 +11,12 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String)
     
-    # Anciens champs (Legacy support)
-    profile_data = Column(Text, nullable=True)
+    # --- MODIFICATION TITAN ---
+    # Passage en JSON pour flexibilité maximale (compatible SQLite & Postgres)
+    # C'est ici que tout le profil Flutter sera stocké
+    profile_data = Column(JSON, default={}) 
+    
+    # Anciens champs (Legacy support - conservés pour zéro régression)
     strategy_data = Column(Text, nullable=True)
     weekly_plan_data = Column(Text, nullable=True)
     draft_workout_data = Column(Text, nullable=True)
@@ -21,7 +25,7 @@ class User(Base):
     workouts = relationship("WorkoutSession", back_populates="owner")
     feed_items = relationship("FeedItem", back_populates="owner", cascade="all, delete-orphan")
     
-    # [NOUVEAU] Relation vers le Profil Enrichi
+    # Relation vers le Profil Enrichi (V2) - On garde pour l'instant
     athlete_profile = relationship("AthleteProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 class AthleteProfile(Base):
@@ -66,7 +70,7 @@ class CoachMemory(Base):
 
     last_updated = Column(DateTime(timezone=True), server_default=func.now())
 
-    athlete_profile = relationship("AthleteProfile", back_populates="coach_memory")
+    athlete_profile = relationship("AthleteProfile", back_populates="athlete_profile")
 
 # --- MODÈLES EXISTANTS ---
 class WorkoutSession(Base):

@@ -4,7 +4,40 @@ from datetime import date, datetime
 from enum import Enum
 import json
 
-# --- ENUMS & TYPES ---
+# --- NOUVEAUX SCHEMAS FLEXIBLES (TITAN UPDATE) ---
+
+class ProfileUpdate(BaseModel):
+    """
+    Accepte TOUT le JSON envoyé par Flutter sans validation stricte.
+    C'est le 'sac de sport fourre-tout'.
+    """
+    profile_data: Dict[str, Any]
+
+# --- USER & AUTH ---
+
+class UserCreate(BaseModel):
+    username: str
+    email: Optional[str] = None
+    password: str
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: Optional[str] = None
+    # Modification ici : on renvoie un Dict, pas une string
+    profile_data: Optional[Dict[str, Any]] = None 
+    
+    class Config:
+        from_attributes = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+# --- LEGACY SCHEMAS (Conservés pour compatibilité existante) ---
 
 class SportType(str, Enum):
     RUGBY = "Rugby"
@@ -14,14 +47,11 @@ class SportType(str, Enum):
     RUNNING = "Running"
     OTHER = "Autre"
 
-# --- SUB-SCHEMAS FOR PROFILE ---
-
 class BasicInfo(BaseModel):
     pseudo: Optional[str] = None
     email: Optional[str] = None
     birth_date: Optional[str] = None
     training_age: Optional[int] = 0
-    biological_sex: Optional[str] = "Homme"
 
 class PhysicalMetrics(BaseModel):
     height: float = 0
@@ -41,8 +71,6 @@ class TrainingPreferences(BaseModel):
     duration_min: int = 60
     preferred_split: str = "Upper/Lower"
 
-# --- MAIN PROFILE SCHEMAS ---
-
 class AthleteProfileBase(BaseModel):
     basic_info: BasicInfo = Field(default_factory=BasicInfo)
     physical_metrics: PhysicalMetrics = Field(default_factory=PhysicalMetrics)
@@ -53,48 +81,15 @@ class AthleteProfileBase(BaseModel):
     injury_prevention: Dict[str, Any] = {}
     performance_baseline: Dict[str, Any] = {}
 
-    # ✅ VALIDATEUR UNIVERSEL : Transforme les strings JSON en Dicts automatiquement
-    # Ce validateur intercepte les données brutes AVANT que Pydantic ne tente de valider les types.
-    @field_validator(
-        'basic_info', 
-        'physical_metrics', 
-        'sport_context', 
-        'training_preferences', 
-        'goals', 
-        'constraints', 
-        'injury_prevention', 
-        'performance_baseline',
-        mode='before'
-    )
-    def parse_json_strings(cls, v):
-        # Si la valeur est une string non vide, on tente de la parser
-        if isinstance(v, str) and v.strip():
-            try:
-                return json.loads(v)
-            except json.JSONDecodeError:
-                # Si le JSON est malformé, on renvoie un dict vide pour éviter le crash violent
-                return {} 
-        # Si c'est déjà un dict ou autre, on laisse passer
-        return v
-
 class AthleteProfileCreate(AthleteProfileBase):
     pass
-
-class AthleteProfileUpdate(AthleteProfileBase):
-    basic_info: Optional[BasicInfo] = None
-    physical_metrics: Optional[PhysicalMetrics] = None
-    sport_context: Optional[SportContext] = None
-    training_preferences: Optional[TrainingPreferences] = None
 
 class AthleteProfileResponse(AthleteProfileBase):
     id: int
     user_id: int
     created_at: Optional[datetime] = None
-    
     class Config:
         from_attributes = True
-
-# --- MEMORY SCHEMAS ---
 
 class CoachMemoryResponse(BaseModel):
     id: int
@@ -112,7 +107,7 @@ class CoachMemoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# --- WORKOUT SCHEMAS (UPDATED FOR BE-03) ---
+# --- WORKOUT SCHEMAS ---
 
 class WorkoutSetBase(BaseModel):
     exercise_name: str
@@ -153,7 +148,7 @@ class WorkoutSessionCreate(BaseModel):
     rpe: float
     energy_level: int = 5
     notes: Optional[str] = None
-    ai_analysis: Optional[str] = None # Added for BE-03
+    ai_analysis: Optional[str] = None
     sets: List[WorkoutSetCreate] = []
 
 class WorkoutSetResponse(WorkoutSetBase):
@@ -193,28 +188,6 @@ class AIWorkoutPlan(BaseModel):
     warmup: List[str]
     exercises: List[AIExercise]
     cooldown: List[str]
-
-# --- USER & AUTH ---
-
-class UserCreate(BaseModel):
-    username: str
-    email: Optional[str] = None
-    password: str
-
-class UserResponse(BaseModel):
-    id: int
-    username: str
-    email: Optional[str] = None
-    profile_data: Optional[str] = None 
-    class Config:
-        from_attributes = True
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
 
 # --- FEED ---
 
