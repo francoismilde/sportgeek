@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any, Union
 from datetime import date, datetime
 from enum import Enum
 import json
+import re
 
 # --- ENUMS & TYPES ---
 
@@ -23,19 +24,69 @@ class CyclingMetrics(BaseModel):
     cycling_ftp: Optional[int] = Field(None, description="Functional Threshold Power (Watts)")
 
 class RunningMetrics(BaseModel):
-    running_time_5k: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Temps 5k (HH:MM:SS)")
-    running_time_10k: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Temps 10k (HH:MM:SS)")
-    running_time_21k: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Temps Semi (HH:MM:SS)")
-    running_max_sprint_time: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}\.\d{1,3}$", description="Sprint Max (MM:SS.ms)")
+    # On accepte Union[int, str] pour la compatibilité ascendante, mais on stocke int (secondes)
+    running_time_5k: Optional[Union[int, str]] = Field(None, description="Temps 5k (Secondes)")
+    running_time_10k: Optional[Union[int, str]] = Field(None, description="Temps 10k (Secondes)")
+    running_time_21k: Optional[Union[int, str]] = Field(None, description="Temps Semi (Secondes)")
+    running_max_sprint_time: Optional[Union[int, str]] = Field(None, description="Sprint Max (Secondes)")
+
+    @field_validator('running_time_5k', 'running_time_10k', 'running_time_21k', 'running_max_sprint_time', mode='before')
+    def transform_time_to_seconds(cls, v):
+        """Convertit les anciens formats string (HH:MM:SS) en integer (secondes) à la volée."""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float): # Au cas où
+            return int(v)
+        if isinstance(v, str):
+            # Nettoyage basique
+            v = v.strip()
+            if not v: return None
+            
+            # Format HH:MM:SS ou MM:SS
+            parts = v.split(':')
+            try:
+                if len(parts) == 3: # HH:MM:SS
+                    return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(float(parts[2]))
+                elif len(parts) == 2: # MM:SS
+                    return int(parts[0]) * 60 + int(float(parts[1]))
+                # Si c'est juste une string numérique "1500"
+                elif v.isdigit():
+                    return int(v)
+            except ValueError:
+                # Si format invalide, on laisse passer pour que le Validator métier gère l'erreur proprement
+                return v 
+        return v
 
 class SwimmingMetrics(BaseModel):
-    swimming_time_200m: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}\.\d{1,3}$", description="Temps 200m (MM:SS.ms)")
-    swimming_time_400m: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}\.\d{1,3}$", description="Temps 400m (MM:SS.ms)")
+    swimming_time_200m: Optional[Union[int, str]] = Field(None, description="Temps 200m (Secondes)")
+    swimming_time_400m: Optional[Union[int, str]] = Field(None, description="Temps 400m (Secondes)")
+
+    @field_validator('swimming_time_200m', 'swimming_time_400m', mode='before')
+    def transform_swim_time(cls, v):
+        """Même logique de conversion pour la natation."""
+        if v is None: return None
+        if isinstance(v, int): return v
+        if isinstance(v, float): return int(v)
+        if isinstance(v, str):
+            v = v.strip()
+            if not v: return None
+            parts = v.split(':')
+            try:
+                if len(parts) == 3:
+                    return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(float(parts[2]))
+                elif len(parts) == 2:
+                    return int(parts[0]) * 60 + int(float(parts[1]))
+                elif v.isdigit():
+                    return int(v)
+            except ValueError:
+                return v
+        return v
 
 class PerformanceBaselineSchema(CyclingMetrics, RunningMetrics, SwimmingMetrics):
     """
     Structure unifiée pour les performances.
-    Accepte des champs supplémentaires pour la compatibilité (ex: squat_1rm legacy).
     """
     model_config = ConfigDict(extra='allow')
 
@@ -76,7 +127,7 @@ class AthleteProfileBase(BaseModel):
     constraints: Dict[str, Any] = {}
     injury_prevention: Dict[str, Any] = {}
     
-    # [MISE À JOUR] Utilisation du schéma structuré au lieu de Dict[str, Any]
+    # Utilisation du schéma structuré qui gère la conversion
     performance_baseline: Union[PerformanceBaselineSchema, Dict[str, Any]] = Field(default_factory=dict)
 
     @field_validator('performance_baseline', mode='before')

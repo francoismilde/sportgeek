@@ -53,28 +53,47 @@ def validate_athlete_profile(profile_data: Dict[str, Any]) -> bool:
     return True
 
 def validate_performance_baseline(perf_data: Dict[str, Any]) -> list:
-    """Valide les données de performance, y compris les nouveaux formats."""
+    """Valide les données de performance, maintenant en entiers (secondes/watts)."""
     errors = []
     
-    # Regex Patterns
-    time_hh_mm_ss = r"^\d{2}:\d{2}:\d{2}$" # 00:00:00
-    time_mm_ss_ms = r"^\d{2}:\d{2}\.\d+$"  # 00:00.000
-
-    # 1. Validation Running (HH:MM:SS)
-    for field in ['running_time_5k', 'running_time_10k', 'running_time_21k']:
-        val = perf_data.get(field)
-        if val:
-            if not isinstance(val, str) or not re.match(time_hh_mm_ss, val):
-                errors.append(f"{field} format invalide. Attendu: HH:MM:SS (ex: 00:25:30)")
+    # 1. Validation Running (Secondes)
+    # 5k Record du monde ~12:35 (755s). On met une limite basse à 700s pour être safe.
+    # 5k Marcheur lent ~1h (3600s). Limite haute large.
     
-    # 2. Validation Sprints & Swimming (MM:SS.ms)
-    for field in ['running_max_sprint_time', 'swimming_time_200m', 'swimming_time_400m']:
-        val = perf_data.get(field)
-        if val:
-            if not isinstance(val, str) or not re.match(time_mm_ss_ms, val):
-                errors.append(f"{field} format invalide. Attendu: MM:SS.ms (ex: 01:45.50)")
+    running_limits = {
+        'running_time_5k': (700, 7200),       # ~11min à 2h
+        'running_time_10k': (1500, 14400),    # ~25min à 4h
+        'running_time_21k': (3400, 28800),    # ~56min à 8h
+        'running_max_sprint_time': (5, 60)    # Sprint court (probablement 100m/400m implicite)
+    }
 
-    # 3. Validation Cycling (Integers/Watts)
+    for field, (min_s, max_s) in running_limits.items():
+        val = perf_data.get(field)
+        if val is not None:
+            # Pydantic a déjà converti en int si possible, sinon c'est resté string invalide
+            if not isinstance(val, int):
+                errors.append(f"{field} format invalide (doit être un entier ou HH:MM:SS valide).")
+            elif val < min_s or val > max_s:
+                 errors.append(f"{field} valeur {val}s hors normes physiologiques ({min_s}s - {max_s}s).")
+
+    # 2. Validation Swimming (Secondes)
+    # 200m Record ~1:42 (102s). 
+    # 400m Record ~3:40 (220s).
+    
+    swim_limits = {
+        'swimming_time_200m': (90, 1800),    # ~1:30 à 30min
+        'swimming_time_400m': (200, 3600),   # ~3:20 à 1h
+    }
+
+    for field, (min_s, max_s) in swim_limits.items():
+        val = perf_data.get(field)
+        if val is not None:
+            if not isinstance(val, int):
+                errors.append(f"{field} format invalide (doit être un entier ou MM:SS valide).")
+            elif val < min_s or val > max_s:
+                 errors.append(f"{field} valeur {val}s hors normes physiologiques ({min_s}s - {max_s}s).")
+
+    # 3. Validation Cycling (Watts)
     for field in ['cycling_max_power_15s', 'cycling_max_power_3min', 'cycling_max_power_20min', 'cycling_ftp']:
         val = perf_data.get(field)
         if val is not None:
