@@ -19,7 +19,7 @@ VALID_SPORT_POSITIONS = {
     'Arts martiaux': ['Judo', 'BJJ', 'Boxe', 'Muay Thai', 'MMA']
 }
 
-VALID_COMPETITION_LEVELS = ['Débutant', 'Amateur', 'Compétiteur', 'Élite', 'Professionnel']
+# Note : VALID_COMPETITION_LEVELS a été supprimé car le niveau est désormais calculé par le backend.
 
 def validate_athlete_profile(profile_data: Dict[str, Any]) -> bool:
     """
@@ -43,7 +43,7 @@ def validate_athlete_profile(profile_data: Dict[str, Any]) -> bool:
     if 'basic_info' in profile_data:
         errors.extend(validate_basic_info(profile_data['basic_info']))
 
-    # [NOUVEAU] Valider les performances (y compris les nouvelles métriques)
+    # Valider les performances (y compris les nouvelles métriques)
     if 'performance_baseline' in profile_data:
         errors.extend(validate_performance_baseline(profile_data['performance_baseline']))
     
@@ -57,29 +57,22 @@ def validate_performance_baseline(perf_data: Dict[str, Any]) -> list:
     errors = []
     
     # 1. Validation Running (Secondes)
-    # 5k Record du monde ~12:35 (755s). On met une limite basse à 700s pour être safe.
-    # 5k Marcheur lent ~1h (3600s). Limite haute large.
-    
     running_limits = {
         'running_time_5k': (700, 7200),       # ~11min à 2h
         'running_time_10k': (1500, 14400),    # ~25min à 4h
         'running_time_21k': (3400, 28800),    # ~56min à 8h
-        'running_max_sprint_time': (5, 60)    # Sprint court (probablement 100m/400m implicite)
+        'running_max_sprint_time': (5, 60)    # Sprint court
     }
 
     for field, (min_s, max_s) in running_limits.items():
         val = perf_data.get(field)
         if val is not None:
-            # Pydantic a déjà converti en int si possible, sinon c'est resté string invalide
             if not isinstance(val, int):
                 errors.append(f"{field} format invalide (doit être un entier ou HH:MM:SS valide).")
             elif val < min_s or val > max_s:
                  errors.append(f"{field} valeur {val}s hors normes physiologiques ({min_s}s - {max_s}s).")
 
     # 2. Validation Swimming (Secondes)
-    # 200m Record ~1:42 (102s). 
-    # 400m Record ~3:40 (220s).
-    
     swim_limits = {
         'swimming_time_200m': (90, 1800),    # ~1:30 à 30min
         'swimming_time_400m': (200, 3600),   # ~3:20 à 1h
@@ -97,7 +90,7 @@ def validate_performance_baseline(perf_data: Dict[str, Any]) -> list:
     for field in ['cycling_max_power_15s', 'cycling_max_power_3min', 'cycling_max_power_20min', 'cycling_ftp']:
         val = perf_data.get(field)
         if val is not None:
-            if not isinstance(val, int) or val < 0 or val > 3000: # 3000W est une limite humaine généreuse
+            if not isinstance(val, int) or val < 0 or val > 3000:
                  errors.append(f"{field} doit être un entier positif réaliste (Watts)")
 
     return errors
@@ -115,13 +108,12 @@ def validate_sport_context(sport_context: Dict[str, Any]) -> list:
         if playing_position not in VALID_SPORT_POSITIONS[primary_sport]:
             errors.append(f"Position '{playing_position}' invalide pour le sport '{primary_sport}'")
     
-    competition_level = sport_context.get('competition_level')
-    if competition_level and competition_level not in VALID_COMPETITION_LEVELS:
-        errors.append(f"Niveau de compétition invalide: {competition_level}")
-    
     training_history = sport_context.get('training_history_years')
     if training_history and (training_history < 0 or training_history > 50):
         errors.append(f"Années d'entraînement invalides: {training_history}")
+    
+    # [MODIF V2] Suppression de la validation de 'competition_level' car le champ a été retiré.
+    # [MODIF V2] Validation de l'équipement (optionnel, assuré par Pydantic Enum, mais on peut ajouter des règles métier ici si besoin)
     
     return errors
 
@@ -246,10 +238,6 @@ def validate_sport_position(sport: str, position: Optional[str]) -> bool:
         return position in VALID_SPORT_POSITIONS[sport]
     
     return True
-
-def validate_competition_level(level: str) -> bool:
-    """Valide le niveau de compétition"""
-    return level in VALID_COMPETITION_LEVELS if level else True
 
 def validate_training_preferences(preferences: Dict[str, Any]) -> list:
     """Valide les préférences d'entraînement"""

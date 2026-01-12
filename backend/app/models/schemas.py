@@ -15,7 +15,20 @@ class SportType(str, Enum):
     RUNNING = "Running"
     OTHER = "Autre"
 
-# --- PERFORMANCE METRICS SUB-SCHEMAS (NOUVEAU MATÉRIEL) ---
+# [NOUVEAU] Énumération stricte pour le matériel (Blueprint V2)
+class EquipmentType(str, Enum):
+    PERFORMANCE_LAB = "PERFORMANCE_LAB"    # VBT, Force Plate
+    COMMERCIAL_GYM = "COMMERCIAL_GYM"      # Machines, Poulies
+    HOME_GYM_BARBELL = "HOME_GYM_BARBELL"  # Rack, Barre, Poids
+    HOME_GYM_DUMBBELL = "HOME_GYM_DUMBBELL" # Haltères
+    CALISTHENICS_KIT = "CALISTHENICS_KIT"  # TRX, Anneaux, Barre de traction
+    BODYWEIGHT_ZERO = "BODYWEIGHT_ZERO"    # Rien du tout (Sol)
+    ENDURANCE_SUITE = "ENDURANCE_SUITE"    # Cardio (Vélo, Tapis, Rameur)
+    
+    # Valeur de fallback pour la rétrocompatibilité (sera migrée)
+    STANDARD = "Standard" 
+
+# --- PERFORMANCE METRICS SUB-SCHEMAS ---
 
 class CyclingMetrics(BaseModel):
     cycling_max_power_15s: Optional[int] = Field(None, description="Puissance Max 15s (Watts)")
@@ -24,7 +37,6 @@ class CyclingMetrics(BaseModel):
     cycling_ftp: Optional[int] = Field(None, description="Functional Threshold Power (Watts)")
 
 class RunningMetrics(BaseModel):
-    # On accepte Union[int, str] pour la compatibilité ascendante, mais on stocke int (secondes)
     running_time_5k: Optional[Union[int, str]] = Field(None, description="Temps 5k (Secondes)")
     running_time_10k: Optional[Union[int, str]] = Field(None, description="Temps 10k (Secondes)")
     running_time_21k: Optional[Union[int, str]] = Field(None, description="Temps Semi (Secondes)")
@@ -32,31 +44,22 @@ class RunningMetrics(BaseModel):
 
     @field_validator('running_time_5k', 'running_time_10k', 'running_time_21k', 'running_max_sprint_time', mode='before')
     def transform_time_to_seconds(cls, v):
-        """Convertit les anciens formats string (HH:MM:SS) en integer (secondes) à la volée."""
-        if v is None:
-            return None
-        if isinstance(v, int):
-            return v
-        if isinstance(v, float): # Au cas où
-            return int(v)
+        if v is None: return None
+        if isinstance(v, int): return v
+        if isinstance(v, float): return int(v)
         if isinstance(v, str):
-            # Nettoyage basique
             v = v.strip()
             if not v: return None
-            
-            # Format HH:MM:SS ou MM:SS
             parts = v.split(':')
             try:
-                if len(parts) == 3: # HH:MM:SS
+                if len(parts) == 3:
                     return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(float(parts[2]))
-                elif len(parts) == 2: # MM:SS
+                elif len(parts) == 2:
                     return int(parts[0]) * 60 + int(float(parts[1]))
-                # Si c'est juste une string numérique "1500"
                 elif v.isdigit():
                     return int(v)
             except ValueError:
-                # Si format invalide, on laisse passer pour que le Validator métier gère l'erreur proprement
-                return v 
+                return v
         return v
 
 class SwimmingMetrics(BaseModel):
@@ -65,7 +68,6 @@ class SwimmingMetrics(BaseModel):
 
     @field_validator('swimming_time_200m', 'swimming_time_400m', mode='before')
     def transform_swim_time(cls, v):
-        """Même logique de conversion pour la natation."""
         if v is None: return None
         if isinstance(v, int): return v
         if isinstance(v, float): return int(v)
@@ -85,9 +87,6 @@ class SwimmingMetrics(BaseModel):
         return v
 
 class PerformanceBaselineSchema(CyclingMetrics, RunningMetrics, SwimmingMetrics):
-    """
-    Structure unifiée pour les performances.
-    """
     model_config = ConfigDict(extra='allow')
 
 # --- SUB-SCHEMAS FOR PROFILE ---
@@ -108,8 +107,25 @@ class PhysicalMetrics(BaseModel):
 class SportContext(BaseModel):
     sport: SportType = SportType.OTHER
     position: Optional[str] = None
-    level: str = "Intermédiaire"
-    equipment: List[str] = ["Standard"]
+    # [MODIF V2] Suppression de 'level' (géré par backend)
+    # [MODIF V2] equipment est maintenant une liste d'Enum stricte
+    equipment: List[EquipmentType] = [EquipmentType.BODYWEIGHT_ZERO]
+
+    @field_validator('equipment', mode='before')
+    def migrate_legacy_equipment(cls, v):
+        """Transforme les anciennes valeurs 'Standard' en 'COMMERCIAL_GYM'."""
+        if not v:
+            return [EquipmentType.BODYWEIGHT_ZERO]
+        
+        cleaned_list = []
+        # Si c'est une liste de strings
+        if isinstance(v, list):
+            for item in v:
+                if item == "Standard":
+                    cleaned_list.append(EquipmentType.COMMERCIAL_GYM)
+                else:
+                    cleaned_list.append(item)
+        return cleaned_list
 
 class TrainingPreferences(BaseModel):
     days_available: List[str] = []
@@ -126,8 +142,6 @@ class AthleteProfileBase(BaseModel):
     goals: Dict[str, Any] = {}
     constraints: Dict[str, Any] = {}
     injury_prevention: Dict[str, Any] = {}
-    
-    # Utilisation du schéma structuré qui gère la conversion
     performance_baseline: Union[PerformanceBaselineSchema, Dict[str, Any]] = Field(default_factory=dict)
 
     @field_validator('performance_baseline', mode='before')
@@ -340,12 +354,7 @@ class WeeklyPlanResponse(BaseModel):
     schedule: List[Any]
     reasoning: str
 
-# [CORRECTIF] On rétablit ProfileUpdate pour la compatibilité avec user.py
 class ProfileUpdate(BaseModel):
-    """
-    Accepte TOUT le JSON envoyé par Flutter sans validation stricte.
-    C'est le 'sac de sport fourre-tout'.
-    """
     profile_data: Dict[str, Any]
 
 class ProfileSectionUpdate(BaseModel):

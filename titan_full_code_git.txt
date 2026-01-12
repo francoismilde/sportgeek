@@ -1074,6 +1074,134 @@ if __name__ == "__main__":
 
 -e 
 ================================================================================
+📄 FICHIER : backend/app/models/domain.py
+================================================================================
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from typing import List, Optional, Dict, Any
+from app.models.enums import CoachingMandate, SlotStatus, LocationContext, EnergyLevel
+
+# --- SOUS-STRUCTURES ---
+
+class ExternalLoad(BaseModel):
+    """
+    Charge externe imposée (ex: Entraînement Club, Match).
+    """
+    type: str = Field(..., description="Type d'activité (ex: Rugby, Match, Crossfit Class)")
+    estimated_rpe: int = Field(..., ge=1, le=10, description="Intensité perçue (1-10)")
+    duration_min: int = Field(..., gt=0, description="Durée en minutes")
+
+    @field_validator('estimated_rpe')
+    def validate_rpe(cls, v):
+        if not 1 <= v <= 10:
+            raise ValueError("Le RPE doit être compris entre 1 et 10")
+        return v
+
+class TimeSlot(BaseModel):
+    """
+    Représente un créneau unique dans la matrice hebdomadaire.
+    """
+    day_of_week: str = Field(..., pattern="^(Lundi|Mardi|Mercredi|Jeudi|Vendredi|Samedi|Dimanche)$")
+    time_of_day: str = Field(..., pattern="^(Matin|Midi|Soir)$")
+    status: SlotStatus = Field(default=SlotStatus.AVAILABLE)
+    location: Optional[LocationContext] = None
+    energy_level: EnergyLevel = Field(default=EnergyLevel.MEDIUM)
+    
+    # Charge externe (optionnel, seulement si SlotStatus.EXTERNAL_LOCKED)
+    external_load: Optional[ExternalLoad] = None
+    
+    # [NOUVEAU] Tags pour le moteur de contraintes (ex: "RESTRICTED_LEG_VOLUME", "NO_DEADLIFT")
+    tags: List[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode='after')
+    def validate_slot_coherence(self):
+        """Vérifie la cohérence entre le statut et la charge."""
+        if self.status == SlotStatus.EXTERNAL_LOCKED and not self.external_load:
+            raise ValueError("Un créneau EXTERNAL_LOCKED doit avoir une 'external_load' définie.")
+        return self
+
+# --- PROFIL ATHLÉTIQUE V2 (DOMAINE) ---
+
+class AthleteProfileDomain(BaseModel):
+    """
+    Représentation 'Domaine' du profil athlète.
+    C'est la version stricte utilisée par le moteur IA, indépendante de la BDD.
+    """
+    # Identité Sportive
+    primary_sport: str
+    mandate: CoachingMandate = Field(default=CoachingMandate.SUPPORT_HYBRID)
+    
+    # Matrice Temporelle (Disponibilités)
+    time_matrix: List[TimeSlot] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode='after')
+    def validate_sport_locations(self):
+        """
+        Règle Métier : Interdire LocationContext.POOL si le sport principal 
+        n'est pas lié à la natation (Triathlon, Natation, etc.).
+        """
+        water_sports = ["Natation", "Triathlon", "Swimrun", "Water-polo"]
+        is_water_sport = self.primary_sport in water_sports
+
+        for slot in self.time_matrix:
+            if slot.location in [LocationContext.POOL_25M, LocationContext.POOL_50M]:
+                if not is_water_sport:
+                    raise ValueError(
+                        f"Impossible d'assigner une piscine ({slot.location}) "
+                        f"pour le sport '{self.primary_sport}'. Réservé aux sports aquatiques."
+                    )
+        return self-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/models/enums.py
+================================================================================
+from enum import Enum, IntEnum
+
+class CoachingMandate(str, Enum):
+    """
+    Niveau d'intervention du Coach IA.
+    - FULL_AUTO_PILOT : L'IA gère tout (Volume, Intensité, Sélection d'exos).
+    - PPG_ONLY : L'IA ne gère que la préparation physique (pas le sport spé).
+    - SUPPORT_HYBRID : L'IA propose, l'athlète dispose (mode assistant).
+    """
+    FULL_AUTO_PILOT = "FULL_AUTO_PILOT"
+    PPG_ONLY = "PPG_ONLY"
+    SUPPORT_HYBRID = "SUPPORT_HYBRID"
+
+class SlotStatus(str, Enum):
+    """
+    État d'un créneau horaire dans la matrice temporelle.
+    """
+    AVAILABLE = "AVAILABLE"           # Créneau libre pour l'entraînement
+    UNAVAILABLE = "UNAVAILABLE"       # Pris (Travail, Famille, etc.)
+    EXTERNAL_LOCKED = "EXTERNAL_LOCKED" # Pris par une contrainte sportive externe (Match, Club)
+
+class LocationContext(str, Enum):
+    """
+    Lieu d'entraînement disponible pour un créneau donné.
+    """
+    HOME = "HOME"                     # Maison (poids du corps, élastiques)
+    HOME_GYM_PRO = "HOME_GYM_PRO"     # Garage gym équipé
+    COMMERCIAL_GYM = "COMMERCIAL_GYM" # Salle de sport classique
+    OUTDOOR_TRACK = "OUTDOOR_TRACK"   # Piste d'athlé / Extérieur
+    POOL_25M = "POOL_25M"             # Piscine petit bain
+    POOL_50M = "POOL_50M"             # Piscine olympique
+
+class EnergyLevel(IntEnum):
+    """
+    Niveau d'énergie allouable sur un créneau (Score).
+    Utilisé pour le calcul de la charge (Load Management).
+    """
+    HIGH_FOCUS = 3    # Performance maximale
+    MEDIUM = 2        # Entraînement standard / Développement
+    LOW_RECOVERY = 1  # Récupération active / Technique légère-e 
+
+-e 
+================================================================================
 📄 FICHIER : backend/app/models/schemas.py
 ================================================================================
 from pydantic import BaseModel, Field, field_validator
@@ -1102,9 +1230,28 @@ class UserResponse(BaseModel):
     id: int
     username: str
     email: Optional[str] = None
-    # Modification ici : on renvoie un Dict, pas une string
+    
+    # 🚨 MODIFICATION : On impose Dict (on retire Union et str)
+    # Cela oblige le validateur ci-dessous à s'exécuter pour transformer la string en dict
     profile_data: Optional[Dict[str, Any]] = None 
     
+    @field_validator('profile_data', mode='before')
+    def parse_profile_data(cls, v):
+        if v is None:
+            return {}
+        # Si c'est déjà un dictionnaire, on le garde tel quel
+        if isinstance(v, dict):
+            return v
+        # Si c'est une chaîne, on tente de la parser
+        if isinstance(v, str):
+            if not v.strip():
+                return {}
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return {} # Fallback vide si le JSON est corrompu
+        return v
+
     class Config:
         from_attributes = True
 
@@ -1344,12 +1491,7 @@ class GoalProgressUpdate(BaseModel):
 # --- HOTFIX: MISSING SCHEMAS ADDED ---
 
 class AthleteProfileUpdate(AthleteProfileBase):
-    pass
-
-class ProfileSectionUpdate(BaseModel):
-    section_data: Dict[str, Any]
-
--e 
+    pass-e 
 
 -e 
 ================================================================================
@@ -1861,7 +2003,7 @@ async def get_profile_completion(
 ================================================================================
 📄 FICHIER : backend/app/routers/auth.py
 ================================================================================
-from datetime import timedelta
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -1876,27 +2018,62 @@ router = APIRouter(
 
 @router.post("/signup", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    """Inscription d'un nouvel utilisateur."""
+    """
+    Inscription d'un nouvel utilisateur.
+    Initialise immédiatement le 'sac de sport' (profile_data) pour éviter les erreurs 500.
+    """
     # 1. Vérifier si le pseudo existe déjà
     db_user = db.query(sql_models.User).filter(sql_models.User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Ce pseudo est déjà pris.")
     
-    # 2. Hasher le mot de passe
+    # 2. Vérifier si l'email existe déjà (si fourni)
+    if user.email:
+        db_email = db.query(sql_models.User).filter(sql_models.User.email == user.email).first()
+        if db_email:
+            raise HTTPException(status_code=400, detail="Cet email est déjà utilisé.")
+    
+    # 3. Hasher le mot de passe
     hashed_pwd = security.get_password_hash(user.password)
     
-    # 3. Créer l'utilisateur avec l'email
+    # 4. Préparer le Casier (Profile Data JSON)
+    # On initialise une structure propre pour que le reste de l'app ne plante pas sur du NULL.
+    initial_profile_data = {
+        "basic_info": {
+            "pseudo": user.username,
+            "email": user.email,
+            "created_at": datetime.utcnow().isoformat()
+        },
+        "onboarding_completed": False,
+        "physical_metrics": {},
+        "goals": {},
+        "stats": {
+            "level": 1,
+            "xp": 0
+        }
+    }
+    
+    # 5. Créer l'utilisateur
     new_user = sql_models.User(
         username=user.username,
-        email=user.email,  # <--- On passe l'email ici
-        hashed_password=hashed_pwd
+        email=user.email,
+        hashed_password=hashed_pwd,
+        profile_data=initial_profile_data # <--- C'est ici que la magie opère
     )
     
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    return new_user
+    try:
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        return new_user
+    except Exception as e:
+        db.rollback()
+        # On log l'erreur pour le debug serveur, mais on renvoie une erreur propre au client
+        print(f"🔥 ERREUR CRITIQUE SIGNUP DB : {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Erreur lors de la création du compte. Vérifiez les données."
+        )
 
 @router.post("/token", response_model=schemas.Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -3033,9 +3210,10 @@ async def compute_acwr_metrics(payload: ACWRRequest):
 ================================================================================
 📄 FICHIER : backend/app/routers/user.py
 ================================================================================
+import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from app.core.database import get_db
 from app.models import sql_models, schemas
@@ -3057,6 +3235,10 @@ async def get_my_profile_data(
     """
     if current_user.profile_data is None:
         current_user.profile_data = {}
+    
+    # SQLAlchemy avec type JSON renvoie déjà un Dict, donc pas de parsing nécessaire ici.
+    # Le validateur Pydantic (schemas.py) est là en sécurité si jamais c'était une string.
+        
     return current_user
 
 @router.post("/complete", response_model=schemas.UserResponse)
@@ -3066,35 +3248,50 @@ async def complete_profile(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    Sauvegarde le profil complet (JSON).
-    URL Finale : POST /api/v1/profiles/complete
+    Sauvegarde le profil complet.
+    Logic : Input (Dict) -> DB (JSON Type - Auto Serialize) -> Output (Dict)
     """
     try:
-        # On injecte le JSON brut reçu du frontend
-        current_user.profile_data = profile_update.profile_data
+        # 1. Récupération des données brutes (Dict)
+        data_dict = profile_update.profile_data
         
-        # Mise à jour du pseudo/email si présents dans le JSON (synchro champs User)
-        if "basic_info" in profile_update.profile_data:
-            basic = profile_update.profile_data["basic_info"]
+        # 2. [CORRECTION] Assignation DIRECTE du Dictionnaire
+        # Le modèle SQL 'User' utilise le type JSON, SQLAlchemy gère la sérialisation.
+        # On passe directement le dictionnaire Python.
+        current_user.profile_data = data_dict
+        
+        # 3. Mise à jour des champs relationnels (User table)
+        if "basic_info" in data_dict:
+            basic = data_dict["basic_info"]
+            
+            # Mise à jour email si fourni et non vide
             if "email" in basic and basic["email"]:
                 current_user.email = basic["email"]
+            
+            # Mise à jour pseudo si fourni et non vide
             if "pseudo" in basic and basic["pseudo"]:
                 current_user.username = basic["pseudo"]
 
+        # Sauvegarde SQL effective
         db.commit()
         db.refresh(current_user)
+        
+        # 4. Retour
+        # SQLAlchemy a mis à jour current_user.profile_data qui est maintenant un Dict (grâce au type JSON).
+        # Pydantic (UserResponse) attend un Dict. Tout est aligné.
         return current_user
         
     except Exception as e:
         db.rollback()
+        # On log l'erreur pour le debug serveur
+        print(f"🔥 ERREUR CRITIQUE SAVE PROFILE: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erreur sauvegarde profil : {str(e)}"
         )
 
-# --- SUPPORT LEGACY (Optionnel, conservé si besoin de compatibilité) ---
-# Ces routes seront désormais préfixées par /api/v1/profiles aussi.
-# Ex: POST /api/v1/profiles/sections/basic_info
+# --- SUPPORT LEGACY (Optionnel, conservé pour compatibilité existante) ---
+# Ces routes seront désormais préfixées par /api/v1/profiles aussi via le main.py
 
 @router.post("/sections/{section}")
 async def update_profile_section(
@@ -3105,14 +3302,28 @@ async def update_profile_section(
 ):
     """
     Mise à jour partielle d'une section.
+    Adapté pour le type JSON de SQLAlchemy.
     """
     try:
-        current_data = current_user.profile_data if current_user.profile_data else {}
-        # Safety check type
-        if not isinstance(current_data, dict):
-            current_data = {}
+        # 1. Chargement des données existantes
+        # Avec le type JSON, SQLAlchemy nous renvoie directement un Dict ou None
+        raw_data = current_user.profile_data
         
+        current_data = {}
+        if raw_data:
+            if isinstance(raw_data, dict):
+                current_data = raw_data.copy() # Copie pour éviter les effets de bord
+            elif isinstance(raw_data, str):
+                # Sécurité au cas où d'anciennes données String traînent
+                try:
+                    current_data = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    current_data = {}
+        
+        # 2. Mise à jour de la section
         current_data[section] = section_data.section_data
+        
+        # 3. Sauvegarde (Direct Dict -> JSON Column)
         current_user.profile_data = current_data
         
         db.commit()
@@ -3124,6 +3335,7 @@ async def update_profile_section(
         }
     except Exception as e:
         db.rollback()
+        print(f"🔥 ERREUR LEGACY SECTION: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))-e 
 
 -e 
@@ -4229,6 +4441,297 @@ class WorkoutAnalysisTrigger(BaseTrigger):
 
 -e 
 ================================================================================
+📄 FICHIER : backend/app/services/onboarding.py
+================================================================================
+import math
+from typing import Dict, Any, Optional, List, Generic, TypeVar, Union
+from pydantic import BaseModel
+from dataclasses import dataclass
+
+# --- TYPES GÉNÉRIQUES POUR LE PATTERN RESULT ---
+
+T = TypeVar('T')
+
+@dataclass
+class ValidationError:
+    field: str
+    message: str
+    value: Any
+
+@dataclass
+class ServiceResult(Generic[T]):
+    success: bool
+    data: Optional[T] = None
+    errors: List[ValidationError] = None
+
+    @staticmethod
+    def ok(data: T) -> 'ServiceResult[T]':
+        return ServiceResult(success=True, data=data)
+
+    @staticmethod
+    def fail(errors: List[ValidationError]) -> 'ServiceResult[T]':
+        return ServiceResult(success=False, errors=errors)
+
+# --- SERVICE D'ONBOARDING ---
+
+class AthleteOnboardingService:
+    """
+    Service responsable de l'ingestion, de la validation et de l'enrichissement
+    du profil athlète avant persistance.
+    Agit comme un 'Expert Filter'.
+    """
+
+    @staticmethod
+    def process_profile(raw_profile_data: Dict[str, Any]) -> ServiceResult[Dict[str, Any]]:
+        """
+        Traite les données brutes du profil.
+        1. Valide les garde-fous (Sanity Checks).
+        2. Gère les Null-States (Flags).
+        3. Calcule les métriques dérivées (CSS, Relative Strength).
+        """
+        errors = []
+        enriched_data = raw_profile_data.copy()
+        
+        # Initialisation des sous-structures si absentes
+        if 'performance_baseline' not in enriched_data:
+            enriched_data['performance_baseline'] = {}
+        if 'physical_metrics' not in enriched_data:
+            enriched_data['physical_metrics'] = {}
+        if 'memory_flags' not in enriched_data:
+            enriched_data['memory_flags'] = {}
+
+        perf = enriched_data['performance_baseline']
+        phys = enriched_data['physical_metrics']
+        flags = enriched_data['memory_flags']
+
+        # --- 1. NULL-STATE LOGIC (Les drapeaux) ---
+        
+        # Check Force
+        squat_1rm = perf.get('squat_1rm')
+        if not squat_1rm:
+            flags['NEEDS_TESTING_FORCE'] = True
+            flags['force_status'] = "Unknown"
+        else:
+            flags['NEEDS_TESTING_FORCE'] = False
+            flags['force_status'] = "Tested"
+
+        # Check Aérobie (VMA)
+        vma = perf.get('vma')
+        if not vma:
+            flags['NEEDS_TESTING_AEROBIC'] = True
+            flags['aerobic_status'] = "Unknown"
+        else:
+            flags['NEEDS_TESTING_AEROBIC'] = False
+            flags['aerobic_status'] = "Tested"
+
+        # --- 2. SANITY CHECKS (Les Garde-fous) ---
+
+        # VMA Humaine Max (~26km/h pour Kipchoge sur marathon, on est large mais safe)
+        if vma and (isinstance(vma, (int, float))):
+            if vma > 26.0:
+                errors.append(ValidationError(
+                    field="vma", 
+                    message="VMA suspecte (> 26 km/h). Êtes-vous sûr ?", 
+                    value=vma
+                ))
+            if vma < 3.0: # Marcher c'est 4-5km/h
+                 errors.append(ValidationError(
+                    field="vma", 
+                    message="VMA trop faible (< 3 km/h).", 
+                    value=vma
+                ))
+
+        # Poids de corps
+        weight = phys.get('weight')
+        if weight and (weight < 30 or weight > 250):
+             errors.append(ValidationError(
+                field="weight", 
+                message="Poids hors normes physiologiques (30-250kg).", 
+                value=weight
+            ))
+
+        # --- 3. COMPUTED FIELDS (Calculs Automatiques) ---
+
+        # Relative Strength (Force Relative)
+        if squat_1rm and weight and weight > 0:
+            try:
+                ratio = round(float(squat_1rm) / float(weight), 2)
+                perf['relative_strength_squat'] = ratio
+            except (ValueError, TypeError):
+                pass # On ignore silencieusement si les types sont foireux (cleanés par Pydantic ailleurs normalement)
+
+        # Critical Swim Speed (CSS)
+        # Formule : CSS = (400 - 200) / (T400 - T200)
+        # T en secondes.
+        t400 = perf.get('swim_400m_time_sec')
+        t200 = perf.get('swim_200m_time_sec')
+
+        if t400 and t200:
+            try:
+                t400_f = float(t400)
+                t200_f = float(t200)
+                
+                delta_dist = 200.0 # 400m - 200m
+                delta_time = t400_f - t200_f
+
+                if delta_time <= 0:
+                    errors.append(ValidationError(
+                        field="swim_times", 
+                        message="Le temps au 400m doit être supérieur au temps au 200m.", 
+                        value=f"400:{t400}, 200:{t200}"
+                    ))
+                else:
+                    css = round(delta_dist / delta_time, 2) # m/s
+
+                    # Sanity Check CSS
+                    if css < 0.5 or css > 2.5:
+                        errors.append(ValidationError(
+                            field="calculated_css", 
+                            message=f"CSS calculé ({css} m/s) hors limites (0.5 - 2.5 m/s). Vérifiez les temps.", 
+                            value=css
+                        ))
+                    else:
+                        perf['critical_swim_speed'] = css
+                        
+            except (ValueError, TypeError):
+                # Si les inputs ne sont pas des nombres propres
+                errors.append(ValidationError(
+                    field="swim_times", 
+                    message="Format des temps de natation invalide.", 
+                    value=f"400:{t400}, 200:{t200}"
+                ))
+
+        # Si erreurs bloquantes, on rejette tout
+        if errors:
+            return ServiceResult.fail(errors)
+
+        # Mise à jour des données enrichies
+        enriched_data['performance_baseline'] = perf
+        enriched_data['memory_flags'] = flags
+        
+        return ServiceResult.ok(enriched_data)-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/app/services/schedule_validator.py
+================================================================================
+from typing import List, Dict, Optional
+from dataclasses import dataclass
+from app.models.domain import AthleteProfileDomain, TimeSlot
+from app.models.enums import SlotStatus, LocationContext, CoachingMandate
+
+@dataclass
+class ConstraintWarning:
+    """
+    Avertissement généré par le validateur pour l'interface utilisateur.
+    """
+    code: str
+    message: str
+    affected_days: List[str]
+
+class ScheduleValidatorService:
+    """
+    Moteur de règles physiologiques et logistiques.
+    Vérifie la cohérence du planning AVANT la génération du programme.
+    """
+
+    # Mapping temporel pour identifier les contiguïtés
+    TIME_ORDER = {"Matin": 0, "Midi": 1, "Soir": 2}
+    DAYS_ORDER = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+
+    @staticmethod
+    def validate_and_tag(profile: AthleteProfileDomain) -> List[ConstraintWarning]:
+        """
+        Applique les règles strictes (Hard Rules).
+        Modifie le profil IN-PLACE (ajout de tags) et retourne des warnings.
+        """
+        warnings: List[ConstraintWarning] = []
+        
+        # On trie la matrice pour faciliter l'analyse séquentielle
+        # (Même si elle devrait l'être, on s'assure de l'ordre Lundi Matin -> Dimanche Soir)
+        sorted_slots = sorted(
+            profile.time_matrix,
+            key=lambda s: (
+                ScheduleValidatorService.DAYS_ORDER.index(s.day_of_week),
+                ScheduleValidatorService.TIME_ORDER[s.time_of_day]
+            )
+        )
+
+        # --- RÈGLE 1 : CONFLIT mTOR/AMPK AIGU ---
+        # Si slot EXTERNE INTENSE (PPS, RPE >= 7), le slot PRÉCÉDENT (<6h) est bridé.
+        
+        for i, slot in enumerate(sorted_slots):
+            if slot.status == SlotStatus.EXTERNAL_LOCKED and slot.external_load:
+                # Vérification des conditions déclenchantes
+                is_pps = "PPS" in slot.external_load.type.upper() or "MATCH" in slot.external_load.type.upper()
+                is_high_intensity = slot.external_load.estimated_rpe >= 7
+                
+                if (is_pps or is_high_intensity):
+                    # Identifier le slot précédent
+                    # Condition < 6h : On regarde uniquement le créneau d'avant LE MÊME JOUR.
+                    # (Soir J-1 -> Matin J est > 6h de sommeil en général, donc hors scope conflit aigu immédiat)
+                    if i > 0:
+                        prev_slot = sorted_slots[i-1]
+                        same_day = prev_slot.day_of_week == slot.day_of_week
+                        
+                        # Si c'est le même jour et que le slot précédent est contigu
+                        # Matin -> Midi OU Midi -> Soir
+                        time_diff = ScheduleValidatorService.TIME_ORDER[slot.time_of_day] - ScheduleValidatorService.TIME_ORDER[prev_slot.time_of_day]
+                        
+                        if same_day and time_diff == 1:
+                            # APPLICATION DE LA SANCTION PHYSIOLOGIQUE
+                            if "RESTRICTED_LEG_VOLUME" not in prev_slot.tags:
+                                prev_slot.tags.append("RESTRICTED_LEG_VOLUME")
+                                warnings.append(ConstraintWarning(
+                                    code="INTERFERENCE_ALERT",
+                                    message=f"Interférence détectée le {slot.day_of_week}. Le volume jambes sera réduit avant votre séance de {slot.external_load.type}.",
+                                    affected_days=[slot.day_of_week]
+                                ))
+
+        # --- RÈGLE 2 : RÉCUPÉRATION SYSTÈME NERVEUX (CNS) ---
+        # Si PPG_ONLY + Charge Externe > 10h/semaine -> Cap Force
+        
+        if profile.mandate == CoachingMandate.PPG_ONLY:
+            total_external_minutes = sum(
+                s.external_load.duration_min 
+                for s in sorted_slots 
+                if s.status == SlotStatus.EXTERNAL_LOCKED and s.external_load
+            )
+            
+            if total_external_minutes > 600: # 10 heures
+                warnings.append(ConstraintWarning(
+                    code="CNS_PROTECTION",
+                    message="Charge externe élevée (>10h). Programme de force plafonné à 2 séances/semaine pour préserver le système nerveux.",
+                    affected_days=[]
+                ))
+                # On taggue tous les slots disponibles pour informer le générateur
+                for s in sorted_slots:
+                    if s.status == SlotStatus.AVAILABLE:
+                        s.tags.append("FORCE_VOLUME_CAP_2_SESSIONS")
+
+        # --- RÈGLE 3 : LOGISTIQUE (MATÉRIEL) ---
+        # Si Location == HOME -> Pas de Deadlift (Lourd)
+        
+        home_days = []
+        for slot in sorted_slots:
+            if slot.location == LocationContext.HOME:
+                if "NO_DEADLIFT" not in slot.tags:
+                    slot.tags.append("NO_DEADLIFT")
+                    # On évite les doublons de jours pour le warning
+                    if slot.day_of_week not in home_days:
+                        home_days.append(slot.day_of_week)
+        
+        if home_days:
+            warnings.append(ConstraintWarning(
+                code="LOGISTICS_LIMIT",
+                message="Séances à domicile détectées : Les exercices nécessitant une barre olympique (ex: Deadlift) seront adaptés.",
+                affected_days=home_days
+            ))
+
+        return warnings-e 
+
+-e 
+================================================================================
 📄 FICHIER : backend/app/validators/athlete_profile_validators.py
 ================================================================================
 """
@@ -5084,65 +5587,104 @@ else:
 ================================================================================
 📄 FICHIER : backend/exe.py
 ================================================================================
-#!/usr/bin/env python3
-"""
-HOTFIX TITANFLOW
-Ajoute les schémas manquants (AthleteProfileUpdate, ProfileSectionUpdate)
-qui causent le crash au démarrage.
-"""
-
+import sys
 import os
-from pathlib import Path
+import pytest
 
-# Chemin vers schemas.py
-BASE_DIR = Path(__file__).parent
-SCHEMAS_FILE = BASE_DIR / "app" / "models" / "schemas.py"
+# Ajout du path pour trouver le module app
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-MISSING_CODE = """
+from app.services.onboarding import AthleteOnboardingService
 
-# --- HOTFIX: MISSING SCHEMAS ADDED ---
-
-class AthleteProfileUpdate(AthleteProfileBase):
-    pass
-
-class ProfileSectionUpdate(BaseModel):
-    section_data: Dict[str, Any]
-
-"""
-
-def fix_schemas():
-    print(f"🔧 Vérification de {SCHEMAS_FILE}...")
+def test_null_state_flags():
+    """Vérifie que les flags sont levés si les données manquent."""
+    raw_data = {
+        "physical_metrics": {"weight": 75},
+        "performance_baseline": {} # Vide
+    }
     
-    if not SCHEMAS_FILE.exists():
-        # Fallback si le script est lancé depuis la racine du projet
-        alt_path = Path("backend") / "app" / "models" / "schemas.py"
-        if alt_path.exists():
-            target_file = alt_path
-        else:
-            print("❌ Impossible de trouver schemas.py")
-            return
-    else:
-        target_file = SCHEMAS_FILE
+    result = AthleteOnboardingService.process_profile(raw_data)
+    
+    assert result.success is True
+    flags = result.data['memory_flags']
+    assert flags['NEEDS_TESTING_FORCE'] is True
+    assert flags['NEEDS_TESTING_AEROBIC'] is True
+    assert flags['force_status'] == "Unknown"
 
-    with open(target_file, "r", encoding="utf-8") as f:
-        content = f.read()
+def test_sanity_check_vma():
+    """Vérifie le rejet d'une VMA impossible."""
+    raw_data = {
+        "performance_baseline": {"vma": 30.0} # Trop rapide
+    }
+    
+    result = AthleteOnboardingService.process_profile(raw_data)
+    
+    assert result.success is False
+    assert result.errors[0].field == "vma"
 
-    # Vérification et Patch
-    if "class AthleteProfileUpdate" not in content:
-        print("⚠️ AthleteProfileUpdate manquant. Application du patch...")
-        
-        with open(target_file, "a", encoding="utf-8") as f:
-            f.write(MISSING_CODE)
-            
-        print("✅ Patch appliqué avec succès !")
-    else:
-        print("✅ AthleteProfileUpdate est déjà présent. Pas de modification nécessaire.")
+def test_css_calculation_success():
+    """Vérifie le calcul correct du CSS."""
+    # Exemple : 
+    # 200m en 2:30 (150s) -> 1.33 m/s
+    # 400m en 5:20 (320s) -> 1.25 m/s
+    # Delta Dist = 200m
+    # Delta Time = 320 - 150 = 170s
+    # CSS = 200 / 170 = 1.176... -> 1.18 m/s
+    
+    raw_data = {
+        "performance_baseline": {
+            "swim_200m_time_sec": 150,
+            "swim_400m_time_sec": 320
+        }
+    }
+    
+    result = AthleteOnboardingService.process_profile(raw_data)
+    
+    assert result.success is True
+    assert result.data['performance_baseline']['critical_swim_speed'] == 1.18
+
+def test_css_sanity_failure():
+    """Vérifie le rejet d'un CSS incohérent (ex: temps 400m < 200m)."""
+    raw_data = {
+        "performance_baseline": {
+            "swim_200m_time_sec": 300,
+            "swim_400m_time_sec": 200 # Impossible, plus rapide sur plus long
+        }
+    }
+    
+    result = AthleteOnboardingService.process_profile(raw_data)
+    
+    assert result.success is False
+    assert "swim_times" in [e.field for e in result.errors]
+
+def test_relative_strength():
+    """Vérifie le calcul de la force relative."""
+    raw_data = {
+        "physical_metrics": {"weight": 80},
+        "performance_baseline": {"squat_1rm": 120}
+    }
+    # Ratio = 120 / 80 = 1.5
+    
+    result = AthleteOnboardingService.process_profile(raw_data)
+    assert result.data['performance_baseline']['relative_strength_squat'] == 1.5
 
 if __name__ == "__main__":
+    # Petit runner manuel si on n'a pas pytest installé globalement
     try:
-        fix_schemas()
+        test_null_state_flags()
+        print("✅ test_null_state_flags PASSED")
+        test_sanity_check_vma()
+        print("✅ test_sanity_check_vma PASSED")
+        test_css_calculation_success()
+        print("✅ test_css_calculation_success PASSED")
+        test_css_sanity_failure()
+        print("✅ test_css_sanity_failure PASSED")
+        test_relative_strength()
+        print("✅ test_relative_strength PASSED")
+    except AssertionError as e:
+        print(f"❌ TEST FAILED: {e}")
     except Exception as e:
-        print(f"❌ Erreur critique : {e}")-e 
+        print(f"❌ ERROR: {e}")-e 
 
 -e 
 ================================================================================
@@ -6107,8 +6649,8 @@ except Exception as e:
 ================================================================================
 #!/usr/bin/env python3
 """
-SCRIPT DE MIGRATION CHIRURGICALE TITAN V2
-Objectif : Passer au Profil JSON sans perdre les utilisateurs.
+SCRIPT DE MIGRATION SÉCURISÉ TITAN V2
+Objectif : Ajouter le support JSON (profile_data) SANS casser l'existant.
 """
 
 import sys
@@ -6129,7 +6671,7 @@ def get_db_url():
     return db_url
 
 def run_migration():
-    print("🚀 DÉMARRAGE DE LA MIGRATION CHIRURGICALE...")
+    print("🚀 DÉMARRAGE DE LA MIGRATION SÉCURISÉE...")
     
     engine = create_engine(get_db_url())
     
@@ -6139,7 +6681,7 @@ def run_migration():
             inspector = inspect(engine)
             existing_tables = inspector.get_table_names()
             
-            # --- ÉTAPE 1 : AJOUTER LA COLONNE JSON À USERS ---
+            # --- ÉTAPE 1 : AJOUTER LA COLONNE JSON À USERS (CRITIQUE POUR AUTH.PY) ---
             print("\n1️⃣  Vérification de la table 'users'...")
             if 'users' in existing_tables:
                 columns = [col['name'] for col in inspector.get_columns('users')]
@@ -6147,29 +6689,29 @@ def run_migration():
                 if 'profile_data' not in columns:
                     print("   ➕ Ajout de la colonne 'profile_data'...")
                     # Syntaxe compatible Postgres (JSONB) et SQLite (TEXT/JSON)
-                    is_postgres = "postgres" in str(engine.url)
+                    is_postgres = "postgresql" in str(engine.url)
                     col_type = "JSONB" if is_postgres else "JSON"
                     
-                    if not is_postgres: col_type = "TEXT" # Fallback SQLite
+                    # Fallback SQLite si besoin
+                    if "sqlite" in str(engine.url): col_type = "TEXT" 
 
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN profile_data {col_type} DEFAULT '{{}}'"))
                     print("   ✅ Colonne ajoutée avec succès.")
                 else:
                     print("   ✅ Colonne 'profile_data' déjà présente.")
             else:
-                print("   ⚠️ Table 'users' introuvable (sera créée au redémarrage).")
+                print("   ⚠️ Table 'users' introuvable (sera créée au redémarrage via init_db).")
 
-            # --- ÉTAPE 2 : SUPPRIMER LES TABLES CONFLICTUELLES ---
-            print("\n2️⃣  Nettoyage des anciennes tables...")
-            tables_to_drop = ['coach_memories', 'athlete_profiles']
+            # --- ÉTAPE 2 : PROTECTION DES TABLES EXISTANTES ---
+            # On NE SUPPRIME PAS les tables tant que les modèles SQL les référencent encore.
+            print("\n2️⃣  Vérification des tables historiques (Mode Non-Destructif)...")
+            tables_to_check = ['coach_memories', 'athlete_profiles']
             
-            for table in tables_to_drop:
+            for table in tables_to_check:
                 if table in existing_tables:
-                    print(f"   🗑️  Suppression de {table}...")
-                    conn.execute(text(f"DROP TABLE {table} CASCADE"))
-                    print("   ✅ Supprimée.")
+                    print(f"   🛡️  Table {table} préservée (Code SQL encore actif).")
                 else:
-                    print(f"   ✨ {table} déjà propre.")
+                    print(f"   ℹ️  Table {table} absente (Sera recréée si nécessaire par SQLAlchemy).")
 
             # --- ÉTAPE 3 : CRÉER FEED_ITEMS (SI MANQUANTE) ---
             print("\n3️⃣  Vérification de 'feed_items'...")
@@ -6195,7 +6737,7 @@ def run_migration():
 
             trans.commit()
             print("\n🎉 MIGRATION TERMINÉE AVEC SUCCÈS !")
-            print("   Vos utilisateurs sont saufs et le schéma est à jour.")
+            print("   Votre base est prête pour le profil JSON sans perte de données.")
             
         except Exception as e:
             trans.rollback()
@@ -6762,6 +7304,98 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n❌ Tests interrompus par l'utilisateur")
         sys.exit(1)-e 
+
+-e 
+================================================================================
+📄 FICHIER : backend/test.py
+================================================================================
+import requests
+import sys
+import time
+import json
+
+# Configuration
+BASE_URL = "http://localhost:8000"
+# Génération d'identifiants uniques pour le test
+TIMESTAMP = int(time.time())
+USERNAME = f"ci_bot_{TIMESTAMP}"
+PASSWORD = "TestPassword123!"
+EMAIL = f"ci_{TIMESTAMP}@test.com"
+
+def run_test():
+    print(f"🚀 Démarrage du test de validation FIX-500 sur {BASE_URL}")
+
+    # 1. INSCRIPTION
+    print("🔹 Étape 1 : Inscription...")
+    signup_payload = {"username": USERNAME, "email": EMAIL, "password": PASSWORD}
+    try:
+        r = requests.post(f"{BASE_URL}/auth/signup", json=signup_payload)
+        if r.status_code not in [200, 201]:
+            print(f"❌ Échec Inscription: {r.text}")
+            sys.exit(1)
+    except Exception as e:
+        print(f"❌ Le serveur semble éteint : {e}")
+        sys.exit(1)
+
+    # 2. CONNEXION (TOKEN)
+    print("🔹 Étape 2 : Connexion...")
+    login_data = {"username": USERNAME, "password": PASSWORD}
+    r = requests.post(f"{BASE_URL}/auth/token", data=login_data)
+    if r.status_code != 200:
+        print(f"❌ Échec Connexion: {r.text}")
+        sys.exit(1)
+    
+    token = r.json().get("access_token")
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    # 3. TEST SAUVEGARDE PROFIL (LE COEUR DU BUG)
+    print("🔹 Étape 3 : Sauvegarde Profil (Test de régression)...")
+    
+    # Payload complexe (Dictionnaire imbriqué) pour provoquer l'erreur 500
+    # si le backend ne fait pas le json.dumps()
+    profile_payload = {
+        "profile_data": {
+            "basic_info": {
+                "pseudo": USERNAME,
+                "email": EMAIL,
+                "biography": "Test CI/CD avec caractères spéciaux éàù"
+            },
+            "sport_context": {
+                "sport": "Crossfit",
+                "stats": {"max_pullups": 20, "run_5k": "20:00"}
+            },
+            "goals": {
+                "primary": "Survivre au déploiement"
+            }
+        }
+    }
+
+    r = requests.post(f"{BASE_URL}/api/v1/profiles/complete", json=profile_payload, headers=headers)
+
+    # 4. VERIFICATION
+    if r.status_code == 200:
+        print("✅ SUCCÈS : Le profil a été sauvegardé sans erreur 500.")
+        print("   Le correctif `json.dumps` est actif.")
+        
+        # Vérification optionnelle du retour
+        data = r.json()
+        if isinstance(data.get("profile_data"), dict):
+             print("✅ Le backend a bien retourné un JSON (Dict) propre.")
+        else:
+             print("⚠️ Warning: Le backend a retourné une String au lieu d'un Dict (Pydantic parsing warning).")
+             
+        sys.exit(0)
+    elif r.status_code == 500:
+        print("🔥 ÉCHEC CRITIQUE : Erreur 500 détectée.")
+        print("   Cause probable : Le dictionnaire Python est passé directement à SQLAlchemy sans sérialisation.")
+        print(f"   Réponse : {r.text}")
+        sys.exit(1)
+    else:
+        print(f"❌ Échec inattendu (Code {r.status_code}): {r.text}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    run_test()-e 
 
 -e 
 ================================================================================
