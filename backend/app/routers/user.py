@@ -24,8 +24,8 @@ async def get_my_profile_data(
     if current_user.profile_data is None:
         current_user.profile_data = {}
     
-    # Note : Le validateur dans schemas.py gérera la conversion String -> Dict
-    # si profile_data est une string venant de la BDD.
+    # SQLAlchemy avec type JSON renvoie déjà un Dict, donc pas de parsing nécessaire ici.
+    # Le validateur Pydantic (schemas.py) est là en sécurité si jamais c'était une string.
         
     return current_user
 
@@ -37,16 +37,16 @@ async def complete_profile(
 ):
     """
     Sauvegarde le profil complet.
-    Logic : Input (Dict) -> DB (String) -> Output (Dict)
+    Logic : Input (Dict) -> DB (JSON Type - Auto Serialize) -> Output (Dict)
     """
     try:
         # 1. Récupération des données brutes (Dict)
         data_dict = profile_update.profile_data
         
-        # 2. Sérialisation pour la BDD (Dict -> String)
-        # On stocke une chaîne de caractères car la colonne SQL est TEXT
-        json_str = json.dumps(data_dict)
-        current_user.profile_data = json_str
+        # 2. [CORRECTION] Assignation DIRECTE du Dictionnaire
+        # Le modèle SQL 'User' utilise le type JSON, SQLAlchemy gère la sérialisation.
+        # On passe directement le dictionnaire Python.
+        current_user.profile_data = data_dict
         
         # 3. Mise à jour des champs relationnels (User table)
         if "basic_info" in data_dict:
@@ -62,14 +62,11 @@ async def complete_profile(
 
         # Sauvegarde SQL effective
         db.commit()
-        db.refresh(current_user) # Ici, current_user.profile_data redevient une String venant de la BDD
+        db.refresh(current_user)
         
-        # 4. [FIX CRITIQUE] Préparation de la Réponse pour Pydantic
-        # Pydantic attend un Dict pour générer le JSON de réponse propre.
-        # On écrase temporairement la propriété sur l'objet Python avec le Dictionnaire d'origine.
-        # Cela garantit que le retour API est un JSON pur, et non une string JSON.
-        current_user.profile_data = data_dict
-        
+        # 4. Retour
+        # SQLAlchemy a mis à jour current_user.profile_data qui est maintenant un Dict (grâce au type JSON).
+        # Pydantic (UserResponse) attend un Dict. Tout est aligné.
         return current_user
         
     except Exception as e:
@@ -93,17 +90,19 @@ async def update_profile_section(
 ):
     """
     Mise à jour partielle d'une section.
-    Gère la conversion JSON <-> Dict pour éviter les crashs sur la colonne TEXT.
+    Adapté pour le type JSON de SQLAlchemy.
     """
     try:
-        # 1. Chargement sécurisé (String -> Dict)
-        current_data = {}
+        # 1. Chargement des données existantes
+        # Avec le type JSON, SQLAlchemy nous renvoie directement un Dict ou None
         raw_data = current_user.profile_data
         
+        current_data = {}
         if raw_data:
             if isinstance(raw_data, dict):
-                current_data = raw_data
+                current_data = raw_data.copy() # Copie pour éviter les effets de bord
             elif isinstance(raw_data, str):
+                # Sécurité au cas où d'anciennes données String traînent
                 try:
                     current_data = json.loads(raw_data)
                 except json.JSONDecodeError:
@@ -112,8 +111,8 @@ async def update_profile_section(
         # 2. Mise à jour de la section
         current_data[section] = section_data.section_data
         
-        # 3. Sauvegarde sécurisée (Dict -> String)
-        current_user.profile_data = json.dumps(current_data)
+        # 3. Sauvegarde (Direct Dict -> JSON Column)
+        current_user.profile_data = current_data
         
         db.commit()
         
