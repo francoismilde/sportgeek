@@ -24,9 +24,28 @@ class UserResponse(BaseModel):
     id: int
     username: str
     email: Optional[str] = None
-    # Modification ici : on renvoie un Dict, pas une string
+    
+    # 🚨 MODIFICATION : On impose Dict (on retire Union et str)
+    # Cela oblige le validateur ci-dessous à s'exécuter pour transformer la string en dict
     profile_data: Optional[Dict[str, Any]] = None 
     
+    @field_validator('profile_data', mode='before')
+    def parse_profile_data(cls, v):
+        if v is None:
+            return {}
+        # Si c'est déjà un dictionnaire, on le garde tel quel
+        if isinstance(v, dict):
+            return v
+        # Si c'est une chaîne, on tente de la parser
+        if isinstance(v, str):
+            if not v.strip():
+                return {}
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return {} # Fallback vide si le JSON est corrompu
+        return v
+
     class Config:
         from_attributes = True
 
@@ -267,7 +286,3 @@ class GoalProgressUpdate(BaseModel):
 
 class AthleteProfileUpdate(AthleteProfileBase):
     pass
-
-class ProfileSectionUpdate(BaseModel):
-    section_data: Dict[str, Any]
-
