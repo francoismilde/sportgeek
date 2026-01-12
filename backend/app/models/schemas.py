@@ -1,62 +1,10 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import List, Optional, Dict, Any, Union
 from datetime import date, datetime
 from enum import Enum
 import json
 
-# --- NOUVEAUX SCHEMAS FLEXIBLES (TITAN UPDATE) ---
-
-class ProfileUpdate(BaseModel):
-    """
-    Accepte TOUT le JSON envoyé par Flutter sans validation stricte.
-    C'est le 'sac de sport fourre-tout'.
-    """
-    profile_data: Dict[str, Any]
-
-# --- USER & AUTH ---
-
-class UserCreate(BaseModel):
-    username: str
-    email: Optional[str] = None
-    password: str
-
-class UserResponse(BaseModel):
-    id: int
-    username: str
-    email: Optional[str] = None
-    
-    # 🚨 MODIFICATION : On impose Dict (on retire Union et str)
-    # Cela oblige le validateur ci-dessous à s'exécuter pour transformer la string en dict
-    profile_data: Optional[Dict[str, Any]] = None 
-    
-    @field_validator('profile_data', mode='before')
-    def parse_profile_data(cls, v):
-        if v is None:
-            return {}
-        # Si c'est déjà un dictionnaire, on le garde tel quel
-        if isinstance(v, dict):
-            return v
-        # Si c'est une chaîne, on tente de la parser
-        if isinstance(v, str):
-            if not v.strip():
-                return {}
-            try:
-                return json.loads(v)
-            except json.JSONDecodeError:
-                return {} # Fallback vide si le JSON est corrompu
-        return v
-
-    class Config:
-        from_attributes = True
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
-# --- LEGACY SCHEMAS (Conservés pour compatibilité existante) ---
+# --- ENUMS & TYPES ---
 
 class SportType(str, Enum):
     RUGBY = "Rugby"
@@ -65,6 +13,33 @@ class SportType(str, Enum):
     HYBRID = "Hybrid"
     RUNNING = "Running"
     OTHER = "Autre"
+
+# --- PERFORMANCE METRICS SUB-SCHEMAS (NOUVEAU MATÉRIEL) ---
+
+class CyclingMetrics(BaseModel):
+    cycling_max_power_15s: Optional[int] = Field(None, description="Puissance Max 15s (Watts)")
+    cycling_max_power_3min: Optional[int] = Field(None, description="Puissance Max 3min (Watts)")
+    cycling_max_power_20min: Optional[int] = Field(None, description="Puissance Max 20min (Watts)")
+    cycling_ftp: Optional[int] = Field(None, description="Functional Threshold Power (Watts)")
+
+class RunningMetrics(BaseModel):
+    running_time_5k: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Temps 5k (HH:MM:SS)")
+    running_time_10k: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Temps 10k (HH:MM:SS)")
+    running_time_21k: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}:\d{2}$", description="Temps Semi (HH:MM:SS)")
+    running_max_sprint_time: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}\.\d{1,3}$", description="Sprint Max (MM:SS.ms)")
+
+class SwimmingMetrics(BaseModel):
+    swimming_time_200m: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}\.\d{1,3}$", description="Temps 200m (MM:SS.ms)")
+    swimming_time_400m: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}\.\d{1,3}$", description="Temps 400m (MM:SS.ms)")
+
+class PerformanceBaselineSchema(CyclingMetrics, RunningMetrics, SwimmingMetrics):
+    """
+    Structure unifiée pour les performances.
+    Accepte des champs supplémentaires pour la compatibilité (ex: squat_1rm legacy).
+    """
+    model_config = ConfigDict(extra='allow')
+
+# --- SUB-SCHEMAS FOR PROFILE ---
 
 class BasicInfo(BaseModel):
     pseudo: Optional[str] = None
@@ -90,6 +65,8 @@ class TrainingPreferences(BaseModel):
     duration_min: int = 60
     preferred_split: str = "Upper/Lower"
 
+# --- MAIN PROFILE SCHEMAS ---
+
 class AthleteProfileBase(BaseModel):
     basic_info: BasicInfo = Field(default_factory=BasicInfo)
     physical_metrics: PhysicalMetrics = Field(default_factory=PhysicalMetrics)
@@ -98,7 +75,15 @@ class AthleteProfileBase(BaseModel):
     goals: Dict[str, Any] = {}
     constraints: Dict[str, Any] = {}
     injury_prevention: Dict[str, Any] = {}
-    performance_baseline: Dict[str, Any] = {}
+    
+    # [MISE À JOUR] Utilisation du schéma structuré au lieu de Dict[str, Any]
+    performance_baseline: Union[PerformanceBaselineSchema, Dict[str, Any]] = Field(default_factory=dict)
+
+    @field_validator('performance_baseline', mode='before')
+    def parse_performance(cls, v):
+        if v is None:
+            return {}
+        return v
 
 class AthleteProfileCreate(AthleteProfileBase):
     pass
@@ -109,6 +94,8 @@ class AthleteProfileResponse(AthleteProfileBase):
     created_at: Optional[datetime] = None
     class Config:
         from_attributes = True
+
+# --- MEMORY SCHEMAS ---
 
 class CoachMemoryResponse(BaseModel):
     id: int
@@ -126,7 +113,7 @@ class CoachMemoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# --- WORKOUT SCHEMAS ---
+# --- WORKOUT SCHEMAS (LEGACY & NEW) ---
 
 class WorkoutSetBase(BaseModel):
     exercise_name: str
@@ -208,6 +195,44 @@ class AIWorkoutPlan(BaseModel):
     exercises: List[AIExercise]
     cooldown: List[str]
 
+# --- USER & AUTH ---
+
+class UserCreate(BaseModel):
+    username: str
+    email: Optional[str] = None
+    password: str
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: Optional[str] = None
+    profile_data: Optional[Dict[str, Any]] = None 
+    
+    @field_validator('profile_data', mode='before')
+    def parse_profile_data(cls, v):
+        if v is None:
+            return {}
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, str):
+            if not v.strip():
+                return {}
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return {}
+        return v
+
+    class Config:
+        from_attributes = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
 # --- FEED ---
 
 class FeedItemType(str, Enum):
@@ -281,8 +306,5 @@ class GoalProgressUpdate(BaseModel):
     progress_value: int
     progress_note: Optional[str] = None
     achieved: bool = False
-
-# --- HOTFIX: MISSING SCHEMAS ADDED ---
-
 class AthleteProfileUpdate(AthleteProfileBase):
     pass

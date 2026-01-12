@@ -42,11 +42,46 @@ def validate_athlete_profile(profile_data: Dict[str, Any]) -> bool:
     # Valider les informations de base
     if 'basic_info' in profile_data:
         errors.extend(validate_basic_info(profile_data['basic_info']))
+
+    # [NOUVEAU] Valider les performances (y compris les nouvelles métriques)
+    if 'performance_baseline' in profile_data:
+        errors.extend(validate_performance_baseline(profile_data['performance_baseline']))
     
     if errors:
         raise ValueError(" | ".join(errors))
     
     return True
+
+def validate_performance_baseline(perf_data: Dict[str, Any]) -> list:
+    """Valide les données de performance, y compris les nouveaux formats."""
+    errors = []
+    
+    # Regex Patterns
+    time_hh_mm_ss = r"^\d{2}:\d{2}:\d{2}$" # 00:00:00
+    time_mm_ss_ms = r"^\d{2}:\d{2}\.\d+$"  # 00:00.000
+
+    # 1. Validation Running (HH:MM:SS)
+    for field in ['running_time_5k', 'running_time_10k', 'running_time_21k']:
+        val = perf_data.get(field)
+        if val:
+            if not isinstance(val, str) or not re.match(time_hh_mm_ss, val):
+                errors.append(f"{field} format invalide. Attendu: HH:MM:SS (ex: 00:25:30)")
+    
+    # 2. Validation Sprints & Swimming (MM:SS.ms)
+    for field in ['running_max_sprint_time', 'swimming_time_200m', 'swimming_time_400m']:
+        val = perf_data.get(field)
+        if val:
+            if not isinstance(val, str) or not re.match(time_mm_ss_ms, val):
+                errors.append(f"{field} format invalide. Attendu: MM:SS.ms (ex: 01:45.50)")
+
+    # 3. Validation Cycling (Integers/Watts)
+    for field in ['cycling_max_power_15s', 'cycling_max_power_3min', 'cycling_max_power_20min', 'cycling_ftp']:
+        val = perf_data.get(field)
+        if val is not None:
+            if not isinstance(val, int) or val < 0 or val > 3000: # 3000W est une limite humaine généreuse
+                 errors.append(f"{field} doit être un entier positif réaliste (Watts)")
+
+    return errors
 
 def validate_sport_context(sport_context: Dict[str, Any]) -> list:
     """Valide le contexte sportif"""
