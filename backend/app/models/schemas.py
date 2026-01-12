@@ -113,7 +113,7 @@ class CoachMemoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# --- WORKOUT SCHEMAS (LEGACY & NEW) ---
+# --- WORKOUT SCHEMAS ---
 
 class WorkoutSetBase(BaseModel):
     exercise_name: str
@@ -288,10 +288,18 @@ class StrategyResponse(BaseModel):
 class WeeklyPlanResponse(BaseModel):
     schedule: List[Any]
     reasoning: str
-class UserProfileUpdate(BaseModel):
+
+# [CORRECTIF] On rétablit ProfileUpdate pour la compatibilité avec user.py
+class ProfileUpdate(BaseModel):
+    """
+    Accepte TOUT le JSON envoyé par Flutter sans validation stricte.
+    C'est le 'sac de sport fourre-tout'.
+    """
     profile_data: Dict[str, Any]
+
 class ProfileSectionUpdate(BaseModel):
     section_data: Dict[str, Any]
+
 class DailyMetrics(BaseModel):
     date: str
     weight: Optional[float] = None
@@ -302,9 +310,11 @@ class DailyMetrics(BaseModel):
     muscle_soreness: Optional[int] = None
     perceived_stress: Optional[int] = None
     sleep_duration: Optional[float] = None
+
 class GoalProgressUpdate(BaseModel):
     progress_value: int
     progress_note: Optional[str] = None
     achieved: bool = False
+
 class AthleteProfileUpdate(AthleteProfileBase):
     pass
