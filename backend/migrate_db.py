@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SCRIPT DE MIGRATION CHIRURGICALE TITAN V2
-Objectif : Passer au Profil JSON sans perdre les utilisateurs.
+SCRIPT DE MIGRATION SÉCURISÉ TITAN V2
+Objectif : Ajouter le support JSON (profile_data) SANS casser l'existant.
 """
 
 import sys
@@ -22,7 +22,7 @@ def get_db_url():
     return db_url
 
 def run_migration():
-    print("🚀 DÉMARRAGE DE LA MIGRATION CHIRURGICALE...")
+    print("🚀 DÉMARRAGE DE LA MIGRATION SÉCURISÉE...")
     
     engine = create_engine(get_db_url())
     
@@ -32,7 +32,7 @@ def run_migration():
             inspector = inspect(engine)
             existing_tables = inspector.get_table_names()
             
-            # --- ÉTAPE 1 : AJOUTER LA COLONNE JSON À USERS ---
+            # --- ÉTAPE 1 : AJOUTER LA COLONNE JSON À USERS (CRITIQUE POUR AUTH.PY) ---
             print("\n1️⃣  Vérification de la table 'users'...")
             if 'users' in existing_tables:
                 columns = [col['name'] for col in inspector.get_columns('users')]
@@ -40,29 +40,29 @@ def run_migration():
                 if 'profile_data' not in columns:
                     print("   ➕ Ajout de la colonne 'profile_data'...")
                     # Syntaxe compatible Postgres (JSONB) et SQLite (TEXT/JSON)
-                    is_postgres = "postgres" in str(engine.url)
+                    is_postgres = "postgresql" in str(engine.url)
                     col_type = "JSONB" if is_postgres else "JSON"
                     
-                    if not is_postgres: col_type = "TEXT" # Fallback SQLite
+                    # Fallback SQLite si besoin
+                    if "sqlite" in str(engine.url): col_type = "TEXT" 
 
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN profile_data {col_type} DEFAULT '{{}}'"))
                     print("   ✅ Colonne ajoutée avec succès.")
                 else:
                     print("   ✅ Colonne 'profile_data' déjà présente.")
             else:
-                print("   ⚠️ Table 'users' introuvable (sera créée au redémarrage).")
+                print("   ⚠️ Table 'users' introuvable (sera créée au redémarrage via init_db).")
 
-            # --- ÉTAPE 2 : SUPPRIMER LES TABLES CONFLICTUELLES ---
-            print("\n2️⃣  Nettoyage des anciennes tables...")
-            tables_to_drop = ['coach_memories', 'athlete_profiles']
+            # --- ÉTAPE 2 : PROTECTION DES TABLES EXISTANTES ---
+            # On NE SUPPRIME PAS les tables tant que les modèles SQL les référencent encore.
+            print("\n2️⃣  Vérification des tables historiques (Mode Non-Destructif)...")
+            tables_to_check = ['coach_memories', 'athlete_profiles']
             
-            for table in tables_to_drop:
+            for table in tables_to_check:
                 if table in existing_tables:
-                    print(f"   🗑️  Suppression de {table}...")
-                    conn.execute(text(f"DROP TABLE {table} CASCADE"))
-                    print("   ✅ Supprimée.")
+                    print(f"   🛡️  Table {table} préservée (Code SQL encore actif).")
                 else:
-                    print(f"   ✨ {table} déjà propre.")
+                    print(f"   ℹ️  Table {table} absente (Sera recréée si nécessaire par SQLAlchemy).")
 
             # --- ÉTAPE 3 : CRÉER FEED_ITEMS (SI MANQUANTE) ---
             print("\n3️⃣  Vérification de 'feed_items'...")
@@ -88,7 +88,7 @@ def run_migration():
 
             trans.commit()
             print("\n🎉 MIGRATION TERMINÉE AVEC SUCCÈS !")
-            print("   Vos utilisateurs sont saufs et le schéma est à jour.")
+            print("   Votre base est prête pour le profil JSON sans perte de données.")
             
         except Exception as e:
             trans.rollback()

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -13,27 +13,62 @@ router = APIRouter(
 
 @router.post("/signup", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    """Inscription d'un nouvel utilisateur."""
+    """
+    Inscription d'un nouvel utilisateur.
+    Initialise immédiatement le 'sac de sport' (profile_data) pour éviter les erreurs 500.
+    """
     # 1. Vérifier si le pseudo existe déjà
     db_user = db.query(sql_models.User).filter(sql_models.User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Ce pseudo est déjà pris.")
     
-    # 2. Hasher le mot de passe
+    # 2. Vérifier si l'email existe déjà (si fourni)
+    if user.email:
+        db_email = db.query(sql_models.User).filter(sql_models.User.email == user.email).first()
+        if db_email:
+            raise HTTPException(status_code=400, detail="Cet email est déjà utilisé.")
+    
+    # 3. Hasher le mot de passe
     hashed_pwd = security.get_password_hash(user.password)
     
-    # 3. Créer l'utilisateur avec l'email
+    # 4. Préparer le Casier (Profile Data JSON)
+    # On initialise une structure propre pour que le reste de l'app ne plante pas sur du NULL.
+    initial_profile_data = {
+        "basic_info": {
+            "pseudo": user.username,
+            "email": user.email,
+            "created_at": datetime.utcnow().isoformat()
+        },
+        "onboarding_completed": False,
+        "physical_metrics": {},
+        "goals": {},
+        "stats": {
+            "level": 1,
+            "xp": 0
+        }
+    }
+    
+    # 5. Créer l'utilisateur
     new_user = sql_models.User(
         username=user.username,
-        email=user.email,  # <--- On passe l'email ici
-        hashed_password=hashed_pwd
+        email=user.email,
+        hashed_password=hashed_pwd,
+        profile_data=initial_profile_data # <--- C'est ici que la magie opère
     )
     
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
-    return new_user
+    try:
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        return new_user
+    except Exception as e:
+        db.rollback()
+        # On log l'erreur pour le debug serveur, mais on renvoie une erreur propre au client
+        print(f"🔥 ERREUR CRITIQUE SIGNUP DB : {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Erreur lors de la création du compte. Vérifiez les données."
+        )
 
 @router.post("/token", response_model=schemas.Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
