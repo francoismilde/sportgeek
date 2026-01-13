@@ -2,7 +2,8 @@
 Routeur pour la gestion des profils athlètes enrichis
 """
 import json
-from typing import List, Dict, Any
+import logging
+from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -12,6 +13,10 @@ from app.dependencies import get_current_user
 from app.models import sql_models, schemas
 from app.services.coach_memory.service import initialize_coach_memory
 from app.validators.athlete_profile_validators import validate_athlete_profile
+
+# Configuration du Logger pour le debugging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 router = APIRouter(
     prefix="/api/v1/profiles",
@@ -27,12 +32,15 @@ async def create_complete_profile(
     """
     Crée un profil athlète complet via le wizard
     """
+    logger.info(f"Création de profil demandée pour l'utilisateur : {current_user.id}")
+    
     # Vérifier si l'utilisateur a déjà un profil
     existing_profile = db.query(sql_models.AthleteProfile).filter(
         sql_models.AthleteProfile.user_id == current_user.id
     ).first()
     
     if existing_profile:
+        logger.warning(f"Profil déjà existant pour user {current_user.id}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Un profil existe déjà pour cet utilisateur"
@@ -42,6 +50,7 @@ async def create_complete_profile(
     try:
         validate_athlete_profile(profile_data)
     except ValueError as e:
+        logger.error(f"Erreur de validation : {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
@@ -73,13 +82,99 @@ async def create_complete_profile(
         # Initialiser la mémoire du coach
         initialize_coach_memory(athlete_profile, db)
         
+        logger.info(f"Profil créé avec succès pour user {current_user.id}")
         return athlete_profile
         
-    except IntegrityError:
+    except IntegrityError as e:
         db.rollback()
+        logger.error(f"Erreur d'intégrité DB : {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Erreur d'intégrité des données"
+        )
+
+@router.get("/me", response_model=schemas.AthleteProfileResponse)
+async def get_my_profile(
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Récupère le profil de l'utilisateur connecté
+    """
+    profile = db.query(sql_models.AthleteProfile).filter(
+        sql_models.AthleteProfile.user_id == current_user.id
+    ).first()
+    
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profil non trouvé pour cet utilisateur"
+        )
+    
+    return profile
+
+@router.put("/me", response_model=schemas.AthleteProfileResponse)
+async def update_my_profile(
+    profile_update: schemas.AthleteProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Met à jour le profil de l'utilisateur connecté.
+    Gère explicitement la sérialisation JSON pour éviter les pertes de données.
+    """
+    logger.info(f"⚡ UPDATE PROFILE demandé pour user : {current_user.id}")
+    
+    profile = db.query(sql_models.AthleteProfile).filter(
+        sql_models.AthleteProfile.user_id == current_user.id
+    ).first()
+    
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Profil non trouvé"
+        )
+    
+    # Conversion Pydantic -> Dict en excluant les valeurs None (non envoyées)
+    update_dict = profile_update.dict(exclude_unset=True)
+    
+    # Liste des champs JSON dans le modèle SQL
+    json_fields = [
+        'basic_info', 'physical_metrics', 'sport_context',
+        'performance_baseline', 'injury_prevention', 
+        'training_preferences', 'goals', 'constraints'
+    ]
+    
+    try:
+        updated_sections = []
+        
+        for section, data in update_dict.items():
+            if section in json_fields and data is not None:
+                # 🛑 DEBUG: Log spécifique pour performance_baseline
+                if section == 'performance_baseline':
+                    logger.info(f"📝 Écriture performance_baseline: {data}")
+                
+                # Conversion explicite en JSON string
+                json_data = json.dumps(data)
+                setattr(profile, section, json_data)
+                updated_sections.append(section)
+        
+        # Recalculer la complétion
+        profile.completion_percentage = profile.calculate_completion()
+        profile.is_complete = profile.completion_percentage >= 80
+        
+        db.commit()
+        db.refresh(profile)
+        
+        logger.info(f"✅ Sections mises à jour : {updated_sections}")
+        return profile
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Erreur lors de l'update : {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur de mise à jour: {str(e)}"
         )
 
 @router.get("/{profile_id}", response_model=schemas.AthleteProfileResponse)
@@ -89,7 +184,7 @@ async def get_profile(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    Récupère un profil athlète par ID
+    Récupère un profil athlète par ID (Garde-fou pour admin ou usage spécifique)
     """
     profile = db.query(sql_models.AthleteProfile).filter(
         sql_models.AthleteProfile.id == profile_id,
@@ -112,7 +207,7 @@ async def update_profile(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    Met à jour complètement un profil
+    Met à jour complètement un profil par ID (Legacy / Admin)
     """
     profile = db.query(sql_models.AthleteProfile).filter(
         sql_models.AthleteProfile.id == profile_id,
@@ -125,11 +220,16 @@ async def update_profile(
             detail="Profil non trouvé"
         )
     
-    # Mettre à jour chaque section
+    # Mettre à jour chaque section avec conversion JSON explicite
     update_dict = profile_update.dict(exclude_unset=True)
+    
     for section, data in update_dict.items():
         if data is not None:
-            setattr(profile, section, json.dumps(data))
+            # Sérialisation JSON pour les champs dictionnaires
+            if isinstance(data, (dict, list)):
+                setattr(profile, section, json.dumps(data))
+            else:
+                setattr(profile, section, data)
     
     # Recalculer la complétion
     profile.completion_percentage = profile.calculate_completion()
@@ -176,6 +276,7 @@ async def update_profile_section(
         )
     
     # Mettre à jour la section
+    logger.info(f"Mise à jour section {section_name} pour profil {profile_id}")
     setattr(profile, section_name, json.dumps(section_update.section_data))
     
     # Recalculer la complétion
