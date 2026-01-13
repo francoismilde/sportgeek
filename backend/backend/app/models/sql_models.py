@@ -30,15 +30,15 @@ class AthleteProfile(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True)
 
-    # Blocs de données JSONB (Stockés en JSON/Text compatible SQLite/PG)
-    basic_info = Column(JSON, default={})           # pseudo, email, birth_date, sex...
-    physical_metrics = Column(JSON, default={})     # height, weight, body_fat...
-    sport_context = Column(JSON, default={})        # sport, position, level...
-    performance_baseline = Column(JSON, default={}) # strength, endurance, PRs...
-    injury_prevention = Column(JSON, default={})    # history, weak_links...
-    training_preferences = Column(JSON, default={}) # split, duration, times...
-    goals = Column(JSON, default={})                # primary, milestones...
-    constraints = Column(JSON, default={})          # time, travel, stress...
+    # Blocs de données JSONB
+    basic_info = Column(JSON, default={})
+    physical_metrics = Column(JSON, default={})
+    sport_context = Column(JSON, default={})
+    performance_baseline = Column(JSON, default={})
+    injury_prevention = Column(JSON, default={})
+    training_preferences = Column(JSON, default={})
+    goals = Column(JSON, default={})
+    constraints = Column(JSON, default={})
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -53,23 +53,22 @@ class CoachMemory(Base):
     athlete_profile_id = Column(Integer, ForeignKey("athlete_profiles.id"), unique=True)
 
     # Mémoire contextuelle IA
-    metadata_info = Column(JSON, default={})          # total_interactions, trust_score
-    current_context = Column(JSON, default={})        # fatigue, readiness, phase
-    response_patterns = Column(JSON, default={})      # volume_tolerance, recovery_speed
-    performance_baselines = Column(JSON, default={})  # tracked_prs, progression_rate
-    adaptation_signals = Column(JSON, default={})     # stagnation, overtraining_risk
-    sport_specific_insights = Column(JSON, default={})# transfer_exercises, key_skills
+    metadata_info = Column(JSON, default={})
+    current_context = Column(JSON, default={})
+    response_patterns = Column(JSON, default={})
+    performance_baselines = Column(JSON, default={})
+    adaptation_signals = Column(JSON, default={})
+    sport_specific_insights = Column(JSON, default={})
     training_history_summary = Column(JSON, default={})
-    athlete_preferences = Column(JSON, default={})    # copy for quick access
-    coach_notes = Column(JSON, default={})            # active_hypotheses
-    memory_flags = Column(JSON, default={})           # needs_deload, injury_risk
+    athlete_preferences = Column(JSON, default={})
+    coach_notes = Column(JSON, default={})
+    memory_flags = Column(JSON, default={})
 
     last_updated = Column(DateTime(timezone=True), server_default=func.now())
 
     athlete_profile = relationship("AthleteProfile", back_populates="coach_memory")
 
-# --- MODÈLES EXISTANTS (Conservés pour compatibilité) ---
-
+# --- MODÈLES EXISTANTS ---
 class WorkoutSession(Base):
     __tablename__ = "workout_sessions"
     id = Column(Integer, primary_key=True, index=True)
