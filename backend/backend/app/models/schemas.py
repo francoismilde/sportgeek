@@ -3,41 +3,43 @@ from typing import List, Optional, Dict, Any, Union
 from datetime import date, datetime
 import json
 
-# --- SUB-SCHEMAS FOR PROFILE ---
+# --- SUB-SCHEMAS ---
 
 class BasicInfo(BaseModel):
     pseudo: Optional[str] = None
     email: Optional[str] = None
     birth_date: Optional[str] = None
-    biological_sex: Optional[str] = "Homme" # Ajouté pour compatibilité
+    biological_sex: Optional[str] = "Homme"
     training_age: Optional[int] = 0
 
 class PhysicalMetrics(BaseModel):
-    height: float = 0
-    weight: float = 0
+    height: Optional[float] = 0
+    weight: Optional[float] = 0
     body_fat: Optional[float] = None
     resting_hr: Optional[int] = None
     sleep_quality_avg: Optional[int] = 5
 
 class SportContext(BaseModel):
-    # [FIX 422] On accepte n'importe quelle String venant du Frontend
-    sport: str = "Autre" 
+    # [FIX 422] On accepte tout ce qui vient du Frontend
+    sport: Optional[str] = "Autre"
     position: Optional[str] = None
-    level: str = "Intermédiaire"
-    equipment: List[str] = ["Standard"]
+    level: Optional[str] = "Intermédiaire"
+    equipment: Optional[List[str]] = ["Standard"]
 
 class TrainingPreferences(BaseModel):
     days_available: List[str] = []
     duration_min: int = 60
     preferred_split: str = "Upper/Lower"
 
-# --- MAIN PROFILE SCHEMAS ---
+# --- MAIN PROFILE ---
 
 class AthleteProfileBase(BaseModel):
     basic_info: BasicInfo = Field(default_factory=BasicInfo)
     physical_metrics: PhysicalMetrics = Field(default_factory=PhysicalMetrics)
     sport_context: SportContext = Field(default_factory=SportContext)
     training_preferences: TrainingPreferences = Field(default_factory=TrainingPreferences)
+    
+    # Dictionnaires libres pour le reste
     goals: Dict[str, Any] = {}
     constraints: Dict[str, Any] = {}
     injury_prevention: Dict[str, Any] = {}
@@ -53,7 +55,7 @@ class AthleteProfileResponse(AthleteProfileBase):
     class Config:
         from_attributes = True
 
-# --- MEMORY SCHEMAS ---
+# --- OTHER SCHEMAS (REQUIRED FOR BUILD) ---
 
 class CoachMemoryResponse(BaseModel):
     id: int
@@ -61,17 +63,12 @@ class CoachMemoryResponse(BaseModel):
     current_phase: str = "Général"
     flags: Dict[str, bool] = {}
     insights: Dict[str, Any] = {}
-    
     @field_validator('readiness_score', mode='before')
     def extract_readiness(cls, v):
-        if isinstance(v, dict):
-            return v.get('readiness_score', 50)
+        if isinstance(v, dict): return v.get('readiness_score', 50)
         return v
-
     class Config:
         from_attributes = True
-
-# --- WORKOUT & LEGACY SCHEMAS ---
 
 class WorkoutSetBase(BaseModel):
     exercise_name: str
@@ -81,30 +78,19 @@ class WorkoutSetBase(BaseModel):
     rpe: Optional[float] = 0.0
     rest_seconds: int = 0
     metric_type: str = "LOAD_REPS"
-
     @field_validator('weight', 'reps', mode='before')
     def parse_polymorphic_fields(cls, v):
         if isinstance(v, str):
-            v = v.strip().replace(',', '.')
-            if ':' in v:
-                parts = v.split(':')
-                try:
-                    seconds = 0.0
-                    if len(parts) == 2:
-                        seconds = float(parts[0]) * 60 + float(parts[1])
-                    elif len(parts) == 3:
-                        seconds = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
-                    return seconds
-                except ValueError:
-                    return 0.0
-            try:
-                return float(v)
-            except ValueError:
-                return 0.0
+            try: return float(v.replace(',', '.'))
+            except: return 0.0
         return v
 
-class WorkoutSetCreate(WorkoutSetBase):
-    pass
+class WorkoutSetCreate(WorkoutSetBase): pass
+class WorkoutSetResponse(WorkoutSetBase):
+    id: int
+    weight: float
+    reps: float
+    class Config: from_attributes = True
 
 class WorkoutSessionCreate(BaseModel):
     date: date
@@ -115,19 +101,11 @@ class WorkoutSessionCreate(BaseModel):
     sets: List[WorkoutSetCreate] = []
     ai_analysis: Optional[str] = None
 
-class WorkoutSetResponse(WorkoutSetBase):
-    id: int
-    weight: float
-    reps: float
-    class Config:
-        from_attributes = True
-
 class WorkoutSessionResponse(WorkoutSessionCreate):
     id: int
     ai_analysis: Optional[str] = None
     sets: List[WorkoutSetResponse] = []
-    class Config:
-        from_attributes = True
+    class Config: from_attributes = True
 
 class GenerateWorkoutRequest(BaseModel):
     profile_data: Dict[str, Any]
@@ -141,8 +119,7 @@ class AIExercise(BaseModel):
     tips: str
     recording_mode: str = "LOAD_REPS"
     @field_validator('reps')
-    def force_string_reps(cls, v):
-        return str(v)
+    def force_string_reps(cls, v): return str(v)
 
 class AIWorkoutPlan(BaseModel):
     title: str
@@ -150,8 +127,6 @@ class AIWorkoutPlan(BaseModel):
     warmup: List[str]
     exercises: List[AIExercise]
     cooldown: List[str]
-
-# --- USER & AUTH ---
 
 class UserCreate(BaseModel):
     username: str
@@ -162,19 +137,14 @@ class UserResponse(BaseModel):
     id: int
     username: str
     email: Optional[str] = None
-    profile_data: Optional[Dict[str, Any]] = None 
-    
+    profile_data: Optional[Dict[str, Any]] = None
     @field_validator('profile_data', mode='before')
     def parse_profile_data(cls, v):
         if v is None: return {}
         if isinstance(v, dict): return v
-        if isinstance(v, str):
-            try: return json.loads(v)
-            except: return {}
-        return v
-
-    class Config:
-        from_attributes = True
+        try: return json.loads(v)
+        except: return {}
+    class Config: from_attributes = True
 
 class Token(BaseModel):
     access_token: str
@@ -182,8 +152,6 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
-
-# --- FEED ---
 
 class FeedItemCreate(BaseModel):
     type: str
@@ -197,17 +165,14 @@ class FeedItemResponse(FeedItemCreate):
     is_read: bool
     is_completed: bool
     created_at: datetime
-    
     @field_validator('action_payload', mode='before')
     def parse_payload(cls, v):
         if isinstance(v, str) and v.strip():
             try: return json.loads(v)
             except: return None
         return v
-    class Config:
-        from_attributes = True
+    class Config: from_attributes = True
 
-# --- PERFORMANCE ---
 class OneRepMaxRequest(BaseModel):
     weight: float
     reps: int
