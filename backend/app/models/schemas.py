@@ -167,6 +167,8 @@ class AthleteProfileBase(BaseModel):
     goals: Dict[str, Any] = {}
     constraints: Dict[str, Any] = {}
     injury_prevention: Dict[str, Any] = {}
+    
+    # [CORRECTIF] On autorise Union[Schema, Dict[str, Any]] pour accepter tes données brutes
     performance_baseline: Union[PerformanceBaselineSchema, Dict[str, Any]] = Field(default_factory=dict)
 
     @field_validator('performance_baseline', mode='before')
