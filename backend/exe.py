@@ -1,12 +1,11 @@
 import os
-import re
 
 # Chemins
 BASE_DIR = "backend/app"
-OLD_MODELS = os.path.join(BASE_DIR, "models", "sql_models.py")
-NEW_MODELS = os.path.join(BASE_DIR, "models", "models_v2.py")
+OLD_MODELS_PATH = os.path.join(BASE_DIR, "models", "sql_models.py")
+NEW_MODELS_PATH = os.path.join(BASE_DIR, "models", "core_models.py")
 
-# Le contenu correct des modèles (Copie certifiée ISO)
+# Contenu EXACT et COMPLET des modèles (ISO Prod)
 MODELS_CONTENT = r"""from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, DateTime, Text, Boolean, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -102,60 +101,65 @@ class FeedItem(Base):
     owner = relationship("User", back_populates="feed_items")
 """
 
-def replace_imports(directory):
-    """Parcourt tous les fichiers .py et remplace sql_models par models_v2"""
+def update_imports(directory):
+    """Parcourt tous les fichiers .py et remplace sql_models par core_models"""
     print(f"🔄 Mise à jour des imports dans {directory}...")
     
+    count = 0
     for root, _, files in os.walk(directory):
         for file in files:
-            if file.endswith(".py") and file != "nuke_cache.py":
+            if file.endswith(".py") and file != "final_rename.py":
                 path = os.path.join(root, file)
                 
                 with open(path, "r", encoding="utf-8") as f:
                     content = f.read()
                 
                 # Remplacement intelligent
-                # 1. from app.models import sql_models -> from app.models import models_v2
-                # 2. import app.models.sql_models -> import app.models.models_v2
-                # 3. sql_models.User -> models_v2.User
+                new_content = content
                 
-                new_content = content.replace("app.models.sql_models", "app.models.models_v2")
-                new_content = new_content.replace("import sql_models", "import models_v2")
-                new_content = new_content.replace("from app.models import sql_models", "from app.models import models_v2")
+                # 1. from app.models import sql_models -> from app.models import core_models
+                new_content = new_content.replace("from app.models import sql_models", "from app.models import core_models")
                 
-                # Cas spécifique : alias (as sql_models)
-                new_content = new_content.replace(" as sql_models", " as models_v2")
+                # 2. import app.models.sql_models -> import app.models.core_models
+                new_content = new_content.replace("import app.models.sql_models", "import app.models.core_models")
                 
-                # Si on utilise l'alias dans le code
-                new_content = new_content.replace("sql_models.", "models_v2.")
+                # 3. sql_models. -> core_models.
+                # Attention : on remplace l'usage dans le code
+                new_content = new_content.replace("sql_models.", "core_models.")
+                
+                # 4. Alias : as sql_models -> as core_models
+                new_content = new_content.replace(" as sql_models", " as core_models")
 
                 if content != new_content:
                     print(f"   📝 Modifié : {file}")
                     with open(path, "w", encoding="utf-8") as f:
                         f.write(new_content)
+                    count += 1
+    print(f"✅ {count} fichiers mis à jour.")
 
 def main():
-    print("☢️  OPÉRATION NUKE CACHE DÉMARRÉE")
+    print("☢️  OPÉRATION RENOMMAGE FINAL DÉMARRÉE")
     
-    # 1. Créer le nouveau fichier
-    os.makedirs(os.path.dirname(NEW_MODELS), exist_ok=True)
-    with open(NEW_MODELS, "w", encoding="utf-8") as f:
+    # 1. Créer le nouveau fichier core_models.py
+    os.makedirs(os.path.dirname(NEW_MODELS_PATH), exist_ok=True)
+    with open(NEW_MODELS_PATH, "w", encoding="utf-8") as f:
         f.write(MODELS_CONTENT)
-    print(f"✅ Créé : {NEW_MODELS}")
+    print(f"✅ Créé : {NEW_MODELS_PATH}")
 
     # 2. Mettre à jour tous les imports
-    # On cible le dossier backend/app
-    replace_imports(BASE_DIR)
-    
-    # On cible aussi la racine backend pour les scripts (init_db, etc.)
-    replace_imports("backend")
+    update_imports("backend")
 
-    # 3. Supprimer l'ancien fichier (Optionnel mais recommandé pour forcer l'erreur si oubli)
-    if os.path.exists(OLD_MODELS):
-        os.remove(OLD_MODELS)
-        print(f"🗑️  Supprimé : {OLD_MODELS}")
+    # 3. Supprimer l'ancien fichier (et models_v2 s'il existe)
+    if os.path.exists(OLD_MODELS_PATH):
+        os.remove(OLD_MODELS_PATH)
+        print(f"🗑️  Supprimé : {OLD_MODELS_PATH}")
     
-    print("\n🎉 Terminé ! L'ancien fichier est mort, vive models_v2 !")
+    v2_path = os.path.join(BASE_DIR, "models", "models_v2.py")
+    if os.path.exists(v2_path):
+        os.remove(v2_path)
+        print(f"🗑️  Supprimé : {v2_path}")
+    
+    print("\n🎉 Terminé ! Tout pointe maintenant vers core_models.")
     print("👉 Fais ton git add/commit/push maintenant.")
 
 if __name__ == "__main__":
