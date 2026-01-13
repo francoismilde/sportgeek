@@ -1,440 +1,81 @@
 import os
 
-# ==============================================================================
-# 1. FRONTEND : CORRECTION DU RENDERFLEX (HOME SCREEN)
-# ==============================================================================
-# On réduit légèrement les marges verticales dans _buildCoachWidget pour gagner les 2 pixels.
+# Liste des endroits probables où peut se cacher main.py
+POSSIBLE_PATHS = [
+    os.path.join("backend", "app", "main.py"),      # Si tu es à la racine
+    os.path.join("app", "main.py"),                 # Si tu es dans le dossier backend
+    os.path.join("backend", "backend", "app", "main.py"), # Cas rare de structure imbriquée
+]
 
-HOME_SCREEN_CONTENT = r"""import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'profile_setup_screen.dart';
-import 'bio_calibration_screen.dart';
+def find_main_py():
+    """Cherche le fichier main.py dans les chemins connus"""
+    for path in POSSIBLE_PATHS:
+        if os.path.exists(path):
+            return path
+    return None
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+def fix_routing():
+    print("🕵️‍♂️ Recherche du fichier main.py...")
+    main_path = find_main_py()
+    
+    if not main_path:
+        print("❌ ERREUR : Impossible de trouver main.py.")
+        print(f"   J'ai cherché ici : {POSSIBLE_PATHS}")
+        print("   Conseil : Place ce script à la racine du projet (là où il y a le dossier 'backend').")
+        return
 
-  final Color _bgDark = const Color(0xFF000000);
-  final Color _cardDark = const Color(0xFF1C1C1E);
-  final Color _voltYellow = const Color(0xFFCCFF00);
-  final Color _purpleAI = const Color(0xFFA020F0);
-  final Color _textWhite = const Color(0xFFFFFFFF);
-  final Color _textGrey = const Color(0xFF8E8E93);
-  final Color _successGreen = const Color(0xFF32D74B);
+    print(f"✅ Fichier trouvé : {main_path}")
+    print("🔧 Application du correctif de routage...")
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _bgDark,
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(context),
-              const SizedBox(height: 24),
-              _buildHeroCard(context),
-              const SizedBox(height: 24),
-              const Text(
-                "COCKPIT INSIGHT",
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF8E8E93), letterSpacing: 1.0),
-              ),
-              const SizedBox(height: 12),
-              _buildCoachWidget(),
-              const SizedBox(height: 24),
-              _buildTimelineSection(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+    with open(main_path, "r", encoding="utf-8") as f:
+        content = f.read()
 
-  Widget _buildHeader(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        InkWell(
-          onTap: () {
-            Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfileSetupScreen()));
-          },
-          borderRadius: BorderRadius.circular(30),
-          child: Row(
-            children: [
-              Container(
-                width: 44, height: 44,
-                decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(colors: [Color(0xFF333333), Color(0xFF555555)], begin: Alignment.topLeft, end: Alignment.bottomRight), border: Border.all(color: _voltYellow, width: 2)),
-                child: Icon(Icons.person, color: _textWhite, size: 24),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text("Alexandre", style: GoogleFonts.rubik(fontSize: 16, fontWeight: FontWeight.w700, color: _textWhite)),
-                  Text("ELITE SQUAD", style: GoogleFonts.rubik(fontSize: 12, fontWeight: FontWeight.w800, color: _voltYellow, letterSpacing: 1.0)),
-                ],
-              ),
-            ],
-          ),
-        ),
-        InkWell(
-          onTap: () {
-            Navigator.push(context, MaterialPageRoute(builder: (context) => const BioCalibrationScreen()));
-          },
-          borderRadius: BorderRadius.circular(20),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(color: _successGreen.withOpacity(0.1), borderRadius: BorderRadius.circular(20), border: Border.all(color: _successGreen)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text("92%", style: GoogleFonts.rubik(fontSize: 14, fontWeight: FontWeight.bold, color: _successGreen)),
-                Text("READINESS (LAB)", style: GoogleFonts.rubik(fontSize: 8, fontWeight: FontWeight.bold, color: _successGreen.withOpacity(0.8))),
-              ],
-            ),
-          ),
+    # 1. Ajouter l'import de profiles si absent
+    if "from .routers import" in content and "profiles" not in content:
+        content = content.replace(
+            "from .routers import",
+            "from .routers import profiles, " 
         )
-      ],
-    );
-  }
+        print("   ➕ Import 'profiles' ajouté.")
 
-  Widget _buildHeroCard(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      constraints: const BoxConstraints(minHeight: 280),
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: _cardDark, borderRadius: BorderRadius.circular(24), border: Border.all(color: const Color(0xFF333333)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 30, offset: const Offset(0, 10))],
-      ),
-      child: Stack(
-        children: [
-          Positioned(right: -20, top: -20, child: Icon(Icons.flash_on, size: 150, color: Colors.white.withOpacity(0.05))),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(color: const Color(0xFF333333), borderRadius: BorderRadius.circular(8)),
-                    child: Text("RUNNING • INTERVALLE", style: GoogleFonts.rubik(fontSize: 12, fontWeight: FontWeight.w600, color: _textWhite)),
-                  ),
-                  const Text("🔥", style: TextStyle(fontSize: 20)),
-                ],
-              ),
-              const SizedBox(height: 15),
-              Text("VMA\nPYRAMIDALE", style: GoogleFonts.rubik(fontSize: 28, fontWeight: FontWeight.w900, color: _textWhite, height: 1.1)),
-              const SizedBox(height: 20),
-              Row(children: [_buildMetric("55'", "Durée"), const SizedBox(width: 20), _buildMetric("110", "TSS"), const SizedBox(width: 20), _buildMetric("High", "Intensité")]),
-              const SizedBox(height: 30),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("🚀 Lancement du Module 5..."))); },
-                  style: ElevatedButton.styleFrom(backgroundColor: _voltYellow, foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 18), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 10, shadowColor: _voltYellow.withOpacity(0.3)),
-                  child: Text("DÉMARRER LA SÉANCE", style: GoogleFonts.rubik(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.0)),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMetric(String value, String label) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(value, style: GoogleFonts.robotoMono(fontSize: 18, fontWeight: FontWeight.bold, color: _voltYellow)), Text(label, style: TextStyle(fontSize: 12, color: _textGrey))]);
-  }
-
-  // [CORRECTION] Ajustement des paddings et suppression de l'IntrinsicHeight strict qui cause l'overflow
-  Widget _buildCoachWidget() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0xFF1C1C1E), Color(0xFF2C2C2E)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.transparent),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start, // Alignement en haut pour éviter le stretch forcé
-        children: [
-          Container(
-            width: 4,
-            height: 40, // Hauteur fixe pour la barre décorative au lieu de IntrinsicHeight
-            decoration: BoxDecoration(color: _purpleAI, borderRadius: BorderRadius.circular(2)),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("✦ ANALYSE EN COURS...", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: _purpleAI)),
-                const SizedBox(height: 6), // Réduit de 8 à 6
-                Container(height: 12, width: double.infinity, decoration: BoxDecoration(color: const Color(0xFF333333), borderRadius: BorderRadius.circular(4))),
-                const SizedBox(height: 6), // Réduit de 6 à 6
-                Container(height: 12, width: 150, decoration: BoxDecoration(color: const Color(0xFF333333), borderRadius: BorderRadius.circular(4))),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTimelineSection() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text("CETTE SEMAINE", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _textGrey, letterSpacing: 1.0)),
-        const SizedBox(height: 12),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            _buildDayItem("L", "✔", state: "done"), _buildDayItem("M", "✔", state: "done"), _buildDayItem("M", "14", state: "active"),
-            _buildDayItem("J", "15", state: "future"), _buildDayItem("V", "16", state: "future"), _buildDayItem("S", "17", state: "future"), _buildDayItem("D", "18", state: "future"),
-          ]),
-        const SizedBox(height: 20),
-      ]);
-  }
-
-  Widget _buildDayItem(String dayName, String content, {required String state}) {
-    Color circleColor; Color textColor; Color borderColor;
-    if (state == "done") { circleColor = const Color(0xFF333333); textColor = _textGrey; borderColor = Colors.transparent; }
-    else if (state == "active") { circleColor = _voltYellow.withOpacity(0.1); textColor = _voltYellow; borderColor = _voltYellow; }
-    else { circleColor = const Color(0xFF222222); textColor = _textWhite; borderColor = const Color(0xFF333333); }
-    return Column(children: [
-        Text(dayName, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: state == "future" ? _textGrey : _textWhite)),
-        const SizedBox(height: 6),
-        Container(width: 36, height: 36, decoration: BoxDecoration(color: circleColor, shape: BoxShape.circle, border: Border.all(color: borderColor, width: 2)), child: Center(child: Text(content, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor, decoration: state == "done" ? TextDecoration.lineThrough : null)))),
-      ]);
-  }
-}
-"""
-
-# ==============================================================================
-# 2. BACKEND : CORRECTION DU SCHEMA 422 (STRICTEMENT LAXISTE)
-# ==============================================================================
-# On remplace les Enums stricts par des Strings optionnelles dans schemas.py
-
-SCHEMAS_CONTENT = r"""from pydantic import BaseModel, Field, field_validator, ConfigDict
-from typing import List, Optional, Dict, Any, Union
-from datetime import date, datetime
-import json
-
-# --- SUB-SCHEMAS ---
-
-class BasicInfo(BaseModel):
-    pseudo: Optional[str] = None
-    email: Optional[str] = None
-    birth_date: Optional[str] = None
-    biological_sex: Optional[str] = "Homme"
-    training_age: Optional[int] = 0
-
-class PhysicalMetrics(BaseModel):
-    height: Optional[float] = 0
-    weight: Optional[float] = 0
-    body_fat: Optional[float] = None
-    resting_hr: Optional[int] = None
-    sleep_quality_avg: Optional[int] = 5
-
-class SportContext(BaseModel):
-    # [FIX 422] On accepte tout ce qui vient du Frontend
-    sport: Optional[str] = "Autre"
-    position: Optional[str] = None
-    level: Optional[str] = "Intermédiaire"
-    equipment: Optional[List[str]] = ["Standard"]
-
-class TrainingPreferences(BaseModel):
-    days_available: List[str] = []
-    duration_min: int = 60
-    preferred_split: str = "Upper/Lower"
-
-# --- MAIN PROFILE ---
-
-class AthleteProfileBase(BaseModel):
-    basic_info: BasicInfo = Field(default_factory=BasicInfo)
-    physical_metrics: PhysicalMetrics = Field(default_factory=PhysicalMetrics)
-    sport_context: SportContext = Field(default_factory=SportContext)
-    training_preferences: TrainingPreferences = Field(default_factory=TrainingPreferences)
+    # 2. Désactiver l'ancien routeur (user.py sur /api/v1/profiles)
+    # C'est lui le COUPABLE du 422
+    old_route_block = 'app.include_router(\n    user.router, \n    prefix="/api/v1/profiles", \n    tags=["Profiles"]\n)'
+    old_route_line = 'app.include_router(user.router, prefix="/api/v1/profiles", tags=["Profiles"])'
     
-    # Dictionnaires libres pour le reste
-    goals: Dict[str, Any] = {}
-    constraints: Dict[str, Any] = {}
-    injury_prevention: Dict[str, Any] = {}
-    performance_baseline: Dict[str, Any] = {}
+    if old_route_block in content:
+        content = content.replace(old_route_block, '# 🚫 CONFLIT DÉSACTIVÉ\n# ' + old_route_block.replace('\n', '\n# '))
+        print("   🚫 Ancien routeur (user.py) désactivé.")
+    elif old_route_line in content:
+        content = content.replace(old_route_line, '# 🚫 CONFLIT DÉSACTIVÉ\n# ' + old_route_line)
+        print("   🚫 Ancien routeur (user.py) désactivé.")
+    
+    # 3. Activer le nouveau routeur (profiles.py)
+    new_route = "app.include_router(profiles.router)"
+    
+    if new_route not in content:
+        # On l'insère proprement après les autres routeurs
+        insertion_point = "app.include_router(feed.router)"
+        if insertion_point in content:
+            content = content.replace(
+                insertion_point,
+                f"{insertion_point}\napp.include_router(profiles.router) # ✅ Nouveau routeur Profils"
+            )
+            print("   ✅ Nouveau routeur (profiles.py) activé.")
+        else:
+            # Fallback
+            content += "\n\n# NOUVEAU ROUTEUR PROFILS\napp.include_router(profiles.router)"
+            print("   ✅ Nouveau routeur ajouté à la fin.")
 
-class AthleteProfileCreate(AthleteProfileBase):
-    pass
-
-class AthleteProfileResponse(AthleteProfileBase):
-    id: int
-    user_id: int
-    created_at: Optional[datetime] = None
-    class Config:
-        from_attributes = True
-
-# --- OTHER SCHEMAS (REQUIRED FOR BUILD) ---
-
-class CoachMemoryResponse(BaseModel):
-    id: int
-    readiness_score: int = Field(alias="current_context", default=50)
-    current_phase: str = "Général"
-    flags: Dict[str, bool] = {}
-    insights: Dict[str, Any] = {}
-    @field_validator('readiness_score', mode='before')
-    def extract_readiness(cls, v):
-        if isinstance(v, dict): return v.get('readiness_score', 50)
-        return v
-    class Config:
-        from_attributes = True
-
-class WorkoutSetBase(BaseModel):
-    exercise_name: str
-    set_order: int
-    weight: Union[float, str] = 0.0
-    reps: Union[float, str] = 0.0
-    rpe: Optional[float] = 0.0
-    rest_seconds: int = 0
-    metric_type: str = "LOAD_REPS"
-    @field_validator('weight', 'reps', mode='before')
-    def parse_polymorphic_fields(cls, v):
-        if isinstance(v, str):
-            try: return float(v.replace(',', '.'))
-            except: return 0.0
-        return v
-
-class WorkoutSetCreate(WorkoutSetBase): pass
-class WorkoutSetResponse(WorkoutSetBase):
-    id: int
-    weight: float
-    reps: float
-    class Config: from_attributes = True
-
-class WorkoutSessionCreate(BaseModel):
-    date: date
-    duration: float
-    rpe: float
-    energy_level: int = 5
-    notes: Optional[str] = None
-    sets: List[WorkoutSetCreate] = []
-    ai_analysis: Optional[str] = None
-
-class WorkoutSessionResponse(WorkoutSessionCreate):
-    id: int
-    ai_analysis: Optional[str] = None
-    sets: List[WorkoutSetResponse] = []
-    class Config: from_attributes = True
-
-class GenerateWorkoutRequest(BaseModel):
-    profile_data: Dict[str, Any]
-    context: Dict[str, Any]
-
-class AIExercise(BaseModel):
-    name: str
-    sets: int
-    reps: Union[str, int]
-    rest: int
-    tips: str
-    recording_mode: str = "LOAD_REPS"
-    @field_validator('reps')
-    def force_string_reps(cls, v): return str(v)
-
-class AIWorkoutPlan(BaseModel):
-    title: str
-    coach_comment: str
-    warmup: List[str]
-    exercises: List[AIExercise]
-    cooldown: List[str]
-
-class UserCreate(BaseModel):
-    username: str
-    email: Optional[str] = None
-    password: str
-
-class UserResponse(BaseModel):
-    id: int
-    username: str
-    email: Optional[str] = None
-    profile_data: Optional[Dict[str, Any]] = None
-    @field_validator('profile_data', mode='before')
-    def parse_profile_data(cls, v):
-        if v is None: return {}
-        if isinstance(v, dict): return v
-        try: return json.loads(v)
-        except: return {}
-    class Config: from_attributes = True
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
-class FeedItemCreate(BaseModel):
-    type: str
-    title: str
-    message: str
-    priority: int = 1
-    action_payload: Optional[Dict[str, Any]] = None
-
-class FeedItemResponse(FeedItemCreate):
-    id: str
-    is_read: bool
-    is_completed: bool
-    created_at: datetime
-    @field_validator('action_payload', mode='before')
-    def parse_payload(cls, v):
-        if isinstance(v, str) and v.strip():
-            try: return json.loads(v)
-            except: return None
-        return v
-    class Config: from_attributes = True
-
-class OneRepMaxRequest(BaseModel):
-    weight: float
-    reps: int
-class OneRepMaxResponse(BaseModel):
-    estimated_1rm: float
-    method_used: str
-class ACWRRequest(BaseModel):
-    history: List[Dict[str, Any]]
-class ACWRResponse(BaseModel):
-    ratio: float
-    status: str
-    color: str
-    message: str
-class ProfileAuditRequest(BaseModel):
-    profile_data: Dict[str, Any]
-class ProfileAuditResponse(BaseModel):
-    markdown_report: str
-class StrategyResponse(BaseModel):
-    periodization_title: str
-    phases: List[Any]
-class WeeklyPlanResponse(BaseModel):
-    schedule: List[Any]
-    reasoning: str
-class UserProfileUpdate(BaseModel):
-    profile_data: Dict[str, Any]
-"""
-
-def write_file(path, content):
-    full_path = os.path.join(os.getcwd(), path)
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    with open(full_path, "w", encoding="utf-8") as f:
+    # Sauvegarde
+    with open(main_path, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"✅ Fichier corrigé : {path}")
-
-def main():
-    print("🚑 Réparation Finale TitanFlow (UI & API)")
-    
-    # 1. Correction du débordement UI
-    write_file("frontend/lib/screens/home_screen.dart", HOME_SCREEN_CONTENT)
-    
-    # 2. Correction de la validation API (422)
-    write_file("backend/app/models/schemas.py", SCHEMAS_CONTENT)
-    
-    print("\n🚀 C'est prêt ! Relance maintenant ton Backend (pour prendre en compte les nouveaux schémas) et ton Frontend.")
+        
+    print("\n🎉 SUCCÈS : main.py a été corrigé.")
+    print("👉 PROCHAINE ÉTAPE :")
+    print("   git add .")
+    print("   git commit -m 'fix: Resolve routing conflict 422'")
+    print("   git push")
 
 if __name__ == "__main__":
-    main()
+    fix_routing()

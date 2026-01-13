@@ -66,11 +66,12 @@ app.include_router(auth.router)
 
 # 2. Profiles (CORRECTIF ROUTING 404)
 # On mappe le routeur user sur l'URL attendue par Flutter
-app.include_router(
-    user.router, 
-    prefix="/api/v1/profiles", 
-    tags=["Profiles"]
-)
+# 🚫 CONFLIT DÉSACTIVÉ
+# app.include_router(
+#     user.router, 
+#     prefix="/api/v1/profiles", 
+#     tags=["Profiles"]
+# )
 
 # 3. Autres features
 app.include_router(workouts.router)
@@ -78,6 +79,7 @@ app.include_router(performance.router)
 app.include_router(safety.router)
 app.include_router(coach.router)
 app.include_router(feed.router)
+app.include_router(profiles.router) # ✅ Nouveau routeur Profils
 
 # --- ROUTES SYSTÈME ---
 
