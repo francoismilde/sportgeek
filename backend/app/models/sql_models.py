@@ -11,26 +11,66 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String)
     
-    # ✅ LA SEULE SOURCE DE VÉRITÉ POUR LE PROFIL
-    # Plus de relation complexe. Tout le JSON de Flutter arrive ici.
+    # Anciens champs (Legacy support pour éviter des erreurs de migration si colonnes existent encore)
     profile_data = Column(JSON, default={}) 
-    
-    # Legacy fields (on garde pour éviter de casser des vieux logics au cas où)
     strategy_data = Column(Text, nullable=True)
     weekly_plan_data = Column(Text, nullable=True)
     draft_workout_data = Column(Text, nullable=True)
 
-    # Relations conservées (Essentielles)
+    # Relations
     workouts = relationship("WorkoutSession", back_populates="owner")
     feed_items = relationship("FeedItem", back_populates="owner", cascade="all, delete-orphan")
     
-    # 🗑️ SUPPRIMÉ : relationship("AthleteProfile") -> Cause du crash mapper
+    # Relation V2 vers le Profil Enrichi
+    athlete_profile = relationship("AthleteProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
-# 🗑️ SUPPRIMÉ : class AthleteProfile(...)
-# 🗑️ SUPPRIMÉ : class CoachMemory(...) 
-# (Ces tables disparaissent au profit du profile_data JSON)
+class AthleteProfile(Base):
+    __tablename__ = "athlete_profiles"
 
-# --- ON GARDE LES SÉANCES (CRITIQUE POUR L'HISTORIQUE) ---
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
+
+    # Blocs de données JSON (Hybride)
+    basic_info = Column(JSON, default={})
+    physical_metrics = Column(JSON, default={})
+    sport_context = Column(JSON, default={})
+    performance_baseline = Column(JSON, default={})
+    injury_prevention = Column(JSON, default={})
+    training_preferences = Column(JSON, default={})
+    goals = Column(JSON, default={})
+    constraints = Column(JSON, default={})
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    user = relationship("User", back_populates="athlete_profile")
+    coach_memory = relationship("CoachMemory", back_populates="athlete_profile", uselist=False, cascade="all, delete-orphan")
+
+class CoachMemory(Base):
+    __tablename__ = "coach_memories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    athlete_profile_id = Column(Integer, ForeignKey("athlete_profiles.id"), unique=True)
+
+    # Mémoire contextuelle IA
+    metadata_info = Column(JSON, default={}) # Renommé de metadata vers metadata_info pour éviter conflit réservé SQL parfois
+    metadata = Column(JSON, default={})      # Alias pour compatibilité
+    current_context = Column(JSON, default={})
+    response_patterns = Column(JSON, default={})
+    performance_baselines = Column(JSON, default={})
+    adaptation_signals = Column(JSON, default={})
+    sport_specific_insights = Column(JSON, default={})
+    training_history_summary = Column(JSON, default={})
+    athlete_preferences = Column(JSON, default={})
+    coach_notes = Column(JSON, default={})
+    memory_flags = Column(JSON, default={})
+
+    last_updated = Column(DateTime(timezone=True), server_default=func.now())
+
+    athlete_profile = relationship("AthleteProfile", back_populates="coach_memory")
+
+# --- MODÈLES EXISTANTS (Inchés mais nécessaires) ---
+
 class WorkoutSession(Base):
     __tablename__ = "workout_sessions"
     id = Column(Integer, primary_key=True, index=True)
@@ -60,7 +100,6 @@ class WorkoutSet(Base):
     
     session = relationship("WorkoutSession", back_populates="sets")
 
-# --- ON GARDE LE FEED (CRITIQUE POUR LES NOTIFS) ---
 class FeedItem(Base):
     __tablename__ = "feed_items"
     id = Column(String, primary_key=True, index=True)
