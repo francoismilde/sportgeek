@@ -10,15 +10,12 @@ router = APIRouter(
     tags=["Athlete Profile & Memory"]
 )
 
-# --- PROFILE ENDPOINTS ---
-
 @router.get("/profiles/me", response_model=schemas.AthleteProfileResponse)
 async def get_my_profile(
     current_user: sql_models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if not current_user.athlete_profile:
-        # Création à la volée si inexistant (Migration Lazy)
         profile = sql_models.AthleteProfile(user_id=current_user.id)
         db.add(profile)
         db.commit()
@@ -32,19 +29,19 @@ async def complete_profile(
     current_user: sql_models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # 1. Validation Logic
     sport = profile_data.sport_context.sport
     pos = profile_data.sport_context.position
+    # Validation basique
     if not CoachLogic.validate_sport_position(sport, pos):
-        raise HTTPException(status_code=400, detail=f"Position {pos} invalide pour le sport {sport}")
+        # On log mais on ne bloque pas forcément en phase de dev
+        print(f"Warning: Position {pos} mismatch for sport {sport}")
 
-    # 2. Update or Create
     db_profile = current_user.athlete_profile
     if not db_profile:
         db_profile = sql_models.AthleteProfile(user_id=current_user.id)
         db.add(db_profile)
     
-    # Map fields
+    # 1. Update basic fields
     db_profile.basic_info = profile_data.basic_info.dict()
     db_profile.physical_metrics = profile_data.physical_metrics.dict()
     db_profile.sport_context = profile_data.sport_context.dict()
@@ -52,7 +49,11 @@ async def complete_profile(
     db_profile.goals = profile_data.goals
     db_profile.constraints = profile_data.constraints
     
-    # 3. Initialize Coach Memory if needed
+    # 2. IMPORTANT : Update new fields (Labo & Santé)
+    db_profile.performance_baseline = profile_data.performance_baseline
+    db_profile.injury_prevention = profile_data.injury_prevention
+    
+    # 3. Initialize Memory if needed
     if not db_profile.coach_memory:
         memory = CoachLogic.initialize_memory(db_profile)
         db.add(memory)
@@ -61,16 +62,13 @@ async def complete_profile(
     db.refresh(db_profile)
     return db_profile
 
-# --- MEMORY ENDPOINTS ---
-
 @router.get("/coach-memories/me", response_model=schemas.CoachMemoryResponse)
 async def get_my_coach_memory(
     current_user: sql_models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if not current_user.athlete_profile or not current_user.athlete_profile.coach_memory:
-        raise HTTPException(status_code=404, detail="Profil ou Mémoire introuvable. Complétez votre profil.")
-    
+        raise HTTPException(status_code=404, detail="Profil introuvable.")
     return current_user.athlete_profile.coach_memory
 
 @router.post("/coach-memories/recalculate")

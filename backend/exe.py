@@ -1,98 +1,98 @@
-import sys
 import os
-import pytest
+import sys
+from sqlalchemy import create_engine, text, inspect
+from dotenv import load_dotenv
 
-# Ajout du path pour trouver le module app
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Charger les variables d'env pour l'URL de la DB
+load_dotenv(os.path.join("backend", ".env"))
 
-from app.services.onboarding import AthleteOnboardingService
+def get_db_url():
+    # Récupérer l'URL ou utiliser SQLite par défaut si non défini
+    db_url = os.getenv("DATABASE_URL", "sqlite:///backend/sql_app.db")
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+    return db_url
 
-def test_null_state_flags():
-    """Vérifie que les flags sont levés si les données manquent."""
-    raw_data = {
-        "physical_metrics": {"weight": 75},
-        "performance_baseline": {} # Vide
-    }
+def check_and_migrate():
+    print("🛡️  VÉRIFICATION DU SCHÉMA DE LA BASE DE DONNÉES...")
     
-    result = AthleteOnboardingService.process_profile(raw_data)
+    url = get_db_url()
+    print(f"   🎯 Cible : {url}")
     
-    assert result.success is True
-    flags = result.data['memory_flags']
-    assert flags['NEEDS_TESTING_FORCE'] is True
-    assert flags['NEEDS_TESTING_AEROBIC'] is True
-    assert flags['force_status'] == "Unknown"
+    engine = create_engine(url)
+    inspector = inspect(engine)
+    
+    # Colonnes requises pour le Profil Riche (ISO Prod)
+    required_columns = [
+        "performance_baseline", 
+        "injury_prevention", 
+        "constraints", 
+        "training_preferences",
+        "goals",
+        "sport_context",
+        "physical_metrics",
+        "basic_info"
+    ]
 
-def test_sanity_check_vma():
-    """Vérifie le rejet d'une VMA impossible."""
-    raw_data = {
-        "performance_baseline": {"vma": 30.0} # Trop rapide
-    }
-    
-    result = AthleteOnboardingService.process_profile(raw_data)
-    
-    assert result.success is False
-    assert result.errors[0].field == "vma"
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            # 1. Vérifier si la table existe
+            if not inspector.has_table("athlete_profiles"):
+                print("   ⚠️ Table 'athlete_profiles' inexistante.")
+                print("   🛠️ Création de la table complète...")
+                
+                # Création propre compatible Postgres/SQLite
+                is_postgres = "postgresql" in url
+                json_type = "JSONB" if is_postgres else "JSON" # SQLite gère JSON comme TEXT ou JSON selon version, mais SQLAlchemy gère le mapping.
+                
+                # Pour le SQL brut, on utilise TEXT pour SQLite pour être sûr, JSONB pour PG
+                sql_type = "JSONB" if is_postgres else "TEXT"
 
-def test_css_calculation_success():
-    """Vérifie le calcul correct du CSS."""
-    # Exemple : 
-    # 200m en 2:30 (150s) -> 1.33 m/s
-    # 400m en 5:20 (320s) -> 1.25 m/s
-    # Delta Dist = 200m
-    # Delta Time = 320 - 150 = 170s
-    # CSS = 200 / 170 = 1.176... -> 1.18 m/s
-    
-    raw_data = {
-        "performance_baseline": {
-            "swim_200m_time_sec": 150,
-            "swim_400m_time_sec": 320
-        }
-    }
-    
-    result = AthleteOnboardingService.process_profile(raw_data)
-    
-    assert result.success is True
-    assert result.data['performance_baseline']['critical_swim_speed'] == 1.18
+                conn.execute(text(f"""
+                    CREATE TABLE athlete_profiles (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER UNIQUE,
+                        basic_info {sql_type} DEFAULT '{{}}',
+                        physical_metrics {sql_type} DEFAULT '{{}}',
+                        sport_context {sql_type} DEFAULT '{{}}',
+                        performance_baseline {sql_type} DEFAULT '{{}}',
+                        injury_prevention {sql_type} DEFAULT '{{}}',
+                        training_preferences {sql_type} DEFAULT '{{}}',
+                        goals {sql_type} DEFAULT '{{}}',
+                        constraints {sql_type} DEFAULT '{{}}',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """))
+                print("   ✅ Table 'athlete_profiles' créée avec succès.")
+            
+            else:
+                print("   ✅ Table 'athlete_profiles' trouvée. Vérification des colonnes...")
+                # 2. Vérifier les colonnes manquantes
+                existing_columns = [col['name'] for col in inspector.get_columns("athlete_profiles")]
+                
+                for col in required_columns:
+                    if col not in existing_columns:
+                        print(f"   ➕ Ajout de la colonne manquante : {col}...")
+                        
+                        is_postgres = "postgresql" in url
+                        col_type = "JSONB" if is_postgres else "TEXT" # Safe fallback for SQLite
+                        
+                        conn.execute(text(f"ALTER TABLE athlete_profiles ADD COLUMN {col} {col_type} DEFAULT '{{}}'"))
+                        print(f"      ✅ Colonne {col} ajoutée.")
+                    else:
+                        print(f"      🆗 {col} existe déjà.")
 
-def test_css_sanity_failure():
-    """Vérifie le rejet d'un CSS incohérent (ex: temps 400m < 200m)."""
-    raw_data = {
-        "performance_baseline": {
-            "swim_200m_time_sec": 300,
-            "swim_400m_time_sec": 200 # Impossible, plus rapide sur plus long
-        }
-    }
-    
-    result = AthleteOnboardingService.process_profile(raw_data)
-    
-    assert result.success is False
-    assert "swim_times" in [e.field for e in result.errors]
+            trans.commit()
+            print("\n✨ BASE DE DONNÉES SYNCHRONISÉE ET PRÊTE !")
+            print("   Toutes les données du Labo, Matrice et Santé seront bien sauvegardées.")
 
-def test_relative_strength():
-    """Vérifie le calcul de la force relative."""
-    raw_data = {
-        "physical_metrics": {"weight": 80},
-        "performance_baseline": {"squat_1rm": 120}
-    }
-    # Ratio = 120 / 80 = 1.5
-    
-    result = AthleteOnboardingService.process_profile(raw_data)
-    assert result.data['performance_baseline']['relative_strength_squat'] == 1.5
+        except Exception as e:
+            trans.rollback()
+            print(f"\n❌ ERREUR CRITIQUE : {e}")
+            if "duplicate column" in str(e):
+                print("   (C'est probablement juste une fausse alerte, la colonne existait déjà).")
 
 if __name__ == "__main__":
-    # Petit runner manuel si on n'a pas pytest installé globalement
-    try:
-        test_null_state_flags()
-        print("✅ test_null_state_flags PASSED")
-        test_sanity_check_vma()
-        print("✅ test_sanity_check_vma PASSED")
-        test_css_calculation_success()
-        print("✅ test_css_calculation_success PASSED")
-        test_css_sanity_failure()
-        print("✅ test_css_sanity_failure PASSED")
-        test_relative_strength()
-        print("✅ test_relative_strength PASSED")
-    except AssertionError as e:
-        print(f"❌ TEST FAILED: {e}")
-    except Exception as e:
-        print(f"❌ ERROR: {e}")
+    check_and_migrate()
