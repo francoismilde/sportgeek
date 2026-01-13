@@ -8,15 +8,24 @@ import re
 # --- ENUMS & TYPES ---
 
 class SportType(str, Enum):
+    # --- Valeurs Historiques (Ne pas toucher) ---
     RUGBY = "Rugby"
     FOOTBALL = "Football"
     CROSSFIT = "CrossFit"
     HYBRID = "Hybrid"
     RUNNING = "Running"
     OTHER = "Autre"
+    
+    # --- Nouvelles Valeurs (Titan Mobile V2) ---
+    BODYBUILDING = "BODYBUILDING"
+    CYCLING = "CYCLING"
+    TRIATHLON = "TRIATHLON"
+    POWERLIFTING = "POWERLIFTING"
+    SWIMMING = "SWIMMING"
+    COMBAT_SPORTS = "COMBAT_SPORTS"
 
-# [NOUVEAU] Énumération stricte pour le matériel (Blueprint V2)
 class EquipmentType(str, Enum):
+    # --- Valeurs Historiques ---
     PERFORMANCE_LAB = "PERFORMANCE_LAB"    # VBT, Force Plate
     COMMERCIAL_GYM = "COMMERCIAL_GYM"      # Machines, Poulies
     HOME_GYM_BARBELL = "HOME_GYM_BARBELL"  # Rack, Barre, Poids
@@ -24,9 +33,26 @@ class EquipmentType(str, Enum):
     CALISTHENICS_KIT = "CALISTHENICS_KIT"  # TRX, Anneaux, Barre de traction
     BODYWEIGHT_ZERO = "BODYWEIGHT_ZERO"    # Rien du tout (Sol)
     ENDURANCE_SUITE = "ENDURANCE_SUITE"    # Cardio (Vélo, Tapis, Rameur)
-    
-    # Valeur de fallback pour la rétrocompatibilité (sera migrée)
-    STANDARD = "Standard" 
+    STANDARD = "Standard"                  # Fallback Legacy
+
+    # --- Nouvelles Valeurs (Titan Mobile V2) ---
+    HOME_GYM_FULL = "HOME_GYM_FULL"
+    CROSSFIT_BOX = "CROSSFIT_BOX"
+    DUMBBELLS = "DUMBBELLS"
+    BARBELL = "BARBELL"
+    KETTLEBELLS = "KETTLEBELLS"
+    PULL_UP_BAR = "PULL_UP_BAR"
+    BENCH = "BENCH"
+    DIP_STATION = "DIP_STATION"
+    BANDS = "BANDS"
+    RINGS_TRX = "RINGS_TRX"
+    JUMP_ROPE = "JUMP_ROPE"
+    WEIGHT_VEST = "WEIGHT_VEST"
+    BIKE = "BIKE"
+    HOME_TRAINER = "HOME_TRAINER"
+    ROWER = "ROWER"
+    TREADMILL = "TREADMILL"
+    POOL = "POOL"
 
 # --- PERFORMANCE METRICS SUB-SCHEMAS ---
 
@@ -107,7 +133,6 @@ class PhysicalMetrics(BaseModel):
 class SportContext(BaseModel):
     sport: SportType = SportType.OTHER
     position: Optional[str] = None
-    # [MODIF V2] Suppression de 'level' (géré par backend)
     # [MODIF V2] equipment est maintenant une liste d'Enum stricte
     equipment: List[EquipmentType] = [EquipmentType.BODYWEIGHT_ZERO]
 
@@ -356,7 +381,7 @@ class WeeklyPlanResponse(BaseModel):
 
 class ProfileUpdate(BaseModel):
     profile_data: Dict[str, Any]
-
+    
 class ProfileSectionUpdate(BaseModel):
     section_data: Dict[str, Any]
 
