@@ -18,6 +18,7 @@ from .routers import (
 from app.core.database import engine, Base
 # Import des modèles
 from app.models import sql_models 
+from app.routers import profiles
 
 # Configuration des logs
 logging.basicConfig(level=logging.INFO)
