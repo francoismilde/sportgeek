@@ -13,12 +13,12 @@ from .routers import (
     workouts, 
     coach, 
     user, 
-    feed, 
+    feed,
+    profiles  # ✅ Déjà présent
 )
 from app.core.database import engine, Base
 # Import des modèles
 from app.models import sql_models 
-from app.routers import profiles
 
 # Configuration des logs
 logging.basicConfig(level=logging.INFO)
@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 # --- DATABASE INIT ---
 try:
-    # create_all est SÛR : il ne fait rien si les tables existent déjà.
     Base.metadata.create_all(bind=engine)
     logger.info("✅ Tables SQL vérifiées.")
 except Exception as e:
@@ -65,14 +64,14 @@ async def global_exception_handler(request: Request, exc: Exception):
 # 1. Auth (inchangé)
 app.include_router(auth.router)
 
-# 2. Profiles (CORRECTIF ROUTING 404)
-# On mappe le routeur user sur l'URL attendue par Flutter
-# 🚫 CONFLIT DÉSACTIVÉ
-# app.include_router(
-#     user.router, 
-#     prefix="/api/v1/profiles", 
-#     tags=["Profiles"]
-# )
+# 2. PROFILES - CORRECTION CRITIQUE
+# Le routeur profiles DOIT avoir le préfixe /api/v1/profiles
+# pour matcher l'URL appelée par l'app mobile: /api/v1/profiles/me
+app.include_router(
+    profiles.router, 
+    prefix="/api/v1/profiles",  # ⚠️ TRÈS IMPORTANT
+    tags=["Profiles"]
+)
 
 # 3. Autres features
 app.include_router(workouts.router)
@@ -80,7 +79,6 @@ app.include_router(performance.router)
 app.include_router(safety.router)
 app.include_router(coach.router)
 app.include_router(feed.router)
-app.include_router(profiles.router) # ✅ Nouveau routeur Profils
 
 # --- ROUTES SYSTÈME ---
 

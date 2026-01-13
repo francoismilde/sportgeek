@@ -42,13 +42,30 @@ class AthleteProfile(Base):
     user = relationship("User", back_populates="athlete_profile")
     coach_memory = relationship("CoachMemory", back_populates="athlete_profile", uselist=False, cascade="all, delete-orphan")
 
+    # Méthode pour calculer le pourcentage de complétion (optionnel)
+    @property
+    def completion_percentage(self):
+        sections = [
+            self.basic_info, self.physical_metrics, self.sport_context,
+            self.performance_baseline, self.injury_prevention,
+            self.training_preferences, self.goals, self.constraints
+        ]
+        
+        filled = sum(1 for section in sections if section and section != {})
+        total = len(sections)
+        
+        return int((filled / total) * 100) if total > 0 else 0
+
+    @property
+    def is_complete(self):
+        return self.completion_percentage >= 80
+
 class CoachMemory(Base):
     __tablename__ = "coach_memories"
 
     id = Column(Integer, primary_key=True, index=True)
     athlete_profile_id = Column(Integer, ForeignKey("athlete_profiles.id"), unique=True)
 
-    # CORRECTION ICI : On utilise metadata_info au lieu de metadata
     metadata_info = Column(JSON, default={}) 
     
     current_context = Column(JSON, default={})
@@ -65,7 +82,6 @@ class CoachMemory(Base):
 
     athlete_profile = relationship("AthleteProfile", back_populates="coach_memory")
 
-# Les autres classes (WorkoutSession, WorkoutSet, FeedItem) restent inchangées...
 class WorkoutSession(Base):
     __tablename__ = "workout_sessions"
     id = Column(Integer, primary_key=True, index=True)

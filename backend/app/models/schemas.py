@@ -4,19 +4,19 @@ from datetime import date, datetime
 from enum import Enum
 import json
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- ENUMS & TYPES ---
 
 class SportType(str, Enum):
-    # --- Valeurs Historiques (Ne pas toucher) ---
     RUGBY = "Rugby"
     FOOTBALL = "Football"
     CROSSFIT = "CrossFit"
     HYBRID = "Hybrid"
     RUNNING = "Running"
     OTHER = "Autre"
-    
-    # --- Nouvelles Valeurs (Titan Mobile V2) ---
     BODYBUILDING = "BODYBUILDING"
     CYCLING = "CYCLING"
     TRIATHLON = "TRIATHLON"
@@ -25,17 +25,14 @@ class SportType(str, Enum):
     COMBAT_SPORTS = "COMBAT_SPORTS"
 
 class EquipmentType(str, Enum):
-    # --- Valeurs Historiques ---
-    PERFORMANCE_LAB = "PERFORMANCE_LAB"    # VBT, Force Plate
-    COMMERCIAL_GYM = "COMMERCIAL_GYM"      # Machines, Poulies
-    HOME_GYM_BARBELL = "HOME_GYM_BARBELL"  # Rack, Barre, Poids
-    HOME_GYM_DUMBBELL = "HOME_GYM_DUMBBELL" # Haltères
-    CALISTHENICS_KIT = "CALISTHENICS_KIT"  # TRX, Anneaux, Barre de traction
-    BODYWEIGHT_ZERO = "BODYWEIGHT_ZERO"    # Rien du tout (Sol)
-    ENDURANCE_SUITE = "ENDURANCE_SUITE"    # Cardio (Vélo, Tapis, Rameur)
-    STANDARD = "Standard"                  # Fallback Legacy
-
-    # --- Nouvelles Valeurs (Titan Mobile V2) ---
+    PERFORMANCE_LAB = "PERFORMANCE_LAB"
+    COMMERCIAL_GYM = "COMMERCIAL_GYM"
+    HOME_GYM_BARBELL = "HOME_GYM_BARBELL"
+    HOME_GYM_DUMBBELL = "HOME_GYM_DUMBBELL"
+    CALISTHENICS_KIT = "CALISTHENICS_KIT"
+    BODYWEIGHT_ZERO = "BODYWEIGHT_ZERO"
+    ENDURANCE_SUITE = "ENDURANCE_SUITE"
+    STANDARD = "Standard"
     HOME_GYM_FULL = "HOME_GYM_FULL"
     CROSSFIT_BOX = "CROSSFIT_BOX"
     DUMBBELLS = "DUMBBELLS"
@@ -113,7 +110,43 @@ class SwimmingMetrics(BaseModel):
         return v
 
 class PerformanceBaselineSchema(CyclingMetrics, RunningMetrics, SwimmingMetrics):
+    # Champs supplémentaires pour accepter les données brutes du mobile
+    run_vma_est: Optional[str] = None
+    cycling_ftp_est: Optional[str] = None
+    swim_css_est: Optional[str] = None
+    run_short_dist: Optional[float] = None
+    run_short_min: Optional[float] = None
+    run_short_sec: Optional[float] = None
+    run_long_dist: Optional[float] = None
+    run_long_min: Optional[float] = None
+    run_long_sec: Optional[float] = None
+    bike_short_min: Optional[float] = None
+    bike_short_sec: Optional[float] = None
+    bike_short_watts: Optional[float] = None
+    bike_long_min: Optional[float] = None
+    bike_long_sec: Optional[float] = None
+    bike_long_watts: Optional[float] = None
+    swim_200_min: Optional[float] = None
+    swim_200_sec: Optional[float] = None
+    swim_400_min: Optional[float] = None
+    swim_400_sec: Optional[float] = None
+    run_vma: Optional[float] = None
+    bike_peak_5s: Optional[float] = None
+    run_sprint_max: Optional[float] = None
+    squat_1rm: Optional[float] = None
+    bench_1rm: Optional[float] = None
+    deadlift_1rm: Optional[float] = None
+    pull_load: Optional[float] = None
+    
     model_config = ConfigDict(extra='allow')
+
+    @field_validator('*', mode='before')
+    def clean_none_values(cls, v, info):
+        """Nettoie les valeurs None et chaînes vides."""
+        if info.field_name not in ['run_vma_est', 'cycling_ftp_est', 'swim_css_est']:
+            if v in [None, "", "null", "undefined"]:
+                return None
+        return v
 
 # --- SUB-SCHEMAS FOR PROFILE ---
 
@@ -122,6 +155,7 @@ class BasicInfo(BaseModel):
     email: Optional[str] = None
     birth_date: Optional[str] = None
     training_age: Optional[int] = 0
+    biological_sex: Optional[str] = "MALE"
 
 class PhysicalMetrics(BaseModel):
     height: float = 0
@@ -133,7 +167,7 @@ class PhysicalMetrics(BaseModel):
 class SportContext(BaseModel):
     sport: SportType = SportType.OTHER
     position: Optional[str] = None
-    # [MODIF V2] equipment est maintenant une liste d'Enum stricte
+    level: Optional[str] = "INTERMEDIATE"
     equipment: List[EquipmentType] = [EquipmentType.BODYWEIGHT_ZERO]
 
     @field_validator('equipment', mode='before')
@@ -143,7 +177,6 @@ class SportContext(BaseModel):
             return [EquipmentType.BODYWEIGHT_ZERO]
         
         cleaned_list = []
-        # Si c'est une liste de strings
         if isinstance(v, list):
             for item in v:
                 if item == "Standard":
@@ -168,14 +201,31 @@ class AthleteProfileBase(BaseModel):
     constraints: Dict[str, Any] = {}
     injury_prevention: Dict[str, Any] = {}
     
-    # [CORRECTIF] On autorise Union[Schema, Dict[str, Any]] pour accepter tes données brutes
     performance_baseline: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator('performance_baseline', mode='before')
     def parse_performance(cls, v):
+        """Nettoie et valide les données de performance."""
         if v is None:
             return {}
-        return v
+        
+        try:
+            # Si c'est déjà un dict, le nettoyer
+            if isinstance(v, dict):
+                # Supprimer les valeurs None et chaînes vides (sauf les résultats formatés)
+                cleaned = {}
+                for key, value in v.items():
+                    if value in [None, "", "null", "undefined"]:
+                        continue
+                    # Pour les résultats formatés, garder même les chaînes vides
+                    if key in ['run_vma_est', 'cycling_ftp_est', 'swim_css_est'] and value == "":
+                        continue
+                    cleaned[key] = value
+                return cleaned
+            return {}
+        except Exception as e:
+            logger.error(f"Erreur validation performance_baseline: {e}")
+            return {}
 
 class AthleteProfileCreate(AthleteProfileBase):
     pass
@@ -184,6 +234,8 @@ class AthleteProfileResponse(AthleteProfileBase):
     id: int
     user_id: int
     created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    
     class Config:
         from_attributes = True
 
