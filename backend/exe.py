@@ -1,98 +1,255 @@
 import os
-import sys
-from sqlalchemy import create_engine, text, inspect
-from dotenv import load_dotenv
 
-# Charger les variables d'env pour l'URL de la DB
-load_dotenv(os.path.join("backend", ".env"))
+# Chemin vers le fichier schemas.py
+SCHEMAS_PATH = os.path.join("backend", "app", "models", "schemas.py")
 
-def get_db_url():
-    # Récupérer l'URL ou utiliser SQLite par défaut si non défini
-    db_url = os.getenv("DATABASE_URL", "sqlite:///backend/sql_app.db")
-    if db_url.startswith("postgres://"):
-        db_url = db_url.replace("postgres://", "postgresql://", 1)
-    return db_url
+# Le nouveau contenu "Tolérant" (Sport et Equipment deviennent des str simples)
+NEW_SCHEMAS_CONTENT = r"""from pydantic import BaseModel, Field, field_validator, ConfigDict
+from typing import List, Optional, Dict, Any, Union
+from datetime import date, datetime
+import json
 
-def check_and_migrate():
-    print("🛡️  VÉRIFICATION DU SCHÉMA DE LA BASE DE DONNÉES...")
+# --- SUB-SCHEMAS FOR PROFILE ---
+
+class BasicInfo(BaseModel):
+    pseudo: Optional[str] = None
+    email: Optional[str] = None
+    birth_date: Optional[str] = None
+    biological_sex: Optional[str] = "Homme" # Ajouté pour compatibilité
+    training_age: Optional[int] = 0
+
+class PhysicalMetrics(BaseModel):
+    height: float = 0
+    weight: float = 0
+    body_fat: Optional[float] = None
+    resting_hr: Optional[int] = None
+    sleep_quality_avg: Optional[int] = 5
+
+class SportContext(BaseModel):
+    # [FIX 422] On accepte n'importe quelle String venant du Frontend
+    sport: str = "Autre" 
+    position: Optional[str] = None
+    level: str = "Intermédiaire"
+    equipment: List[str] = ["Standard"]
+
+class TrainingPreferences(BaseModel):
+    days_available: List[str] = []
+    duration_min: int = 60
+    preferred_split: str = "Upper/Lower"
+
+# --- MAIN PROFILE SCHEMAS ---
+
+class AthleteProfileBase(BaseModel):
+    basic_info: BasicInfo = Field(default_factory=BasicInfo)
+    physical_metrics: PhysicalMetrics = Field(default_factory=PhysicalMetrics)
+    sport_context: SportContext = Field(default_factory=SportContext)
+    training_preferences: TrainingPreferences = Field(default_factory=TrainingPreferences)
+    goals: Dict[str, Any] = {}
+    constraints: Dict[str, Any] = {}
+    injury_prevention: Dict[str, Any] = {}
+    performance_baseline: Dict[str, Any] = {}
+
+class AthleteProfileCreate(AthleteProfileBase):
+    pass
+
+class AthleteProfileResponse(AthleteProfileBase):
+    id: int
+    user_id: int
+    created_at: Optional[datetime] = None
+    class Config:
+        from_attributes = True
+
+# --- MEMORY SCHEMAS ---
+
+class CoachMemoryResponse(BaseModel):
+    id: int
+    readiness_score: int = Field(alias="current_context", default=50)
+    current_phase: str = "Général"
+    flags: Dict[str, bool] = {}
+    insights: Dict[str, Any] = {}
     
-    url = get_db_url()
-    print(f"   🎯 Cible : {url}")
+    @field_validator('readiness_score', mode='before')
+    def extract_readiness(cls, v):
+        if isinstance(v, dict):
+            return v.get('readiness_score', 50)
+        return v
+
+    class Config:
+        from_attributes = True
+
+# --- WORKOUT & LEGACY SCHEMAS ---
+
+class WorkoutSetBase(BaseModel):
+    exercise_name: str
+    set_order: int
+    weight: Union[float, str] = 0.0
+    reps: Union[float, str] = 0.0
+    rpe: Optional[float] = 0.0
+    rest_seconds: int = 0
+    metric_type: str = "LOAD_REPS"
+
+    @field_validator('weight', 'reps', mode='before')
+    def parse_polymorphic_fields(cls, v):
+        if isinstance(v, str):
+            v = v.strip().replace(',', '.')
+            if ':' in v:
+                parts = v.split(':')
+                try:
+                    seconds = 0.0
+                    if len(parts) == 2:
+                        seconds = float(parts[0]) * 60 + float(parts[1])
+                    elif len(parts) == 3:
+                        seconds = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                    return seconds
+                except ValueError:
+                    return 0.0
+            try:
+                return float(v)
+            except ValueError:
+                return 0.0
+        return v
+
+class WorkoutSetCreate(WorkoutSetBase):
+    pass
+
+class WorkoutSessionCreate(BaseModel):
+    date: date
+    duration: float
+    rpe: float
+    energy_level: int = 5
+    notes: Optional[str] = None
+    sets: List[WorkoutSetCreate] = []
+    ai_analysis: Optional[str] = None
+
+class WorkoutSetResponse(WorkoutSetBase):
+    id: int
+    weight: float
+    reps: float
+    class Config:
+        from_attributes = True
+
+class WorkoutSessionResponse(WorkoutSessionCreate):
+    id: int
+    ai_analysis: Optional[str] = None
+    sets: List[WorkoutSetResponse] = []
+    class Config:
+        from_attributes = True
+
+class GenerateWorkoutRequest(BaseModel):
+    profile_data: Dict[str, Any]
+    context: Dict[str, Any]
+
+class AIExercise(BaseModel):
+    name: str
+    sets: int
+    reps: Union[str, int]
+    rest: int
+    tips: str
+    recording_mode: str = "LOAD_REPS"
+    @field_validator('reps')
+    def force_string_reps(cls, v):
+        return str(v)
+
+class AIWorkoutPlan(BaseModel):
+    title: str
+    coach_comment: str
+    warmup: List[str]
+    exercises: List[AIExercise]
+    cooldown: List[str]
+
+# --- USER & AUTH ---
+
+class UserCreate(BaseModel):
+    username: str
+    email: Optional[str] = None
+    password: str
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: Optional[str] = None
+    profile_data: Optional[Dict[str, Any]] = None 
     
-    engine = create_engine(url)
-    inspector = inspect(engine)
+    @field_validator('profile_data', mode='before')
+    def parse_profile_data(cls, v):
+        if v is None: return {}
+        if isinstance(v, dict): return v
+        if isinstance(v, str):
+            try: return json.loads(v)
+            except: return {}
+        return v
+
+    class Config:
+        from_attributes = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+# --- FEED ---
+
+class FeedItemCreate(BaseModel):
+    type: str
+    title: str
+    message: str
+    priority: int = 1
+    action_payload: Optional[Dict[str, Any]] = None
+
+class FeedItemResponse(FeedItemCreate):
+    id: str
+    is_read: bool
+    is_completed: bool
+    created_at: datetime
     
-    # Colonnes requises pour le Profil Riche (ISO Prod)
-    required_columns = [
-        "performance_baseline", 
-        "injury_prevention", 
-        "constraints", 
-        "training_preferences",
-        "goals",
-        "sport_context",
-        "physical_metrics",
-        "basic_info"
-    ]
+    @field_validator('action_payload', mode='before')
+    def parse_payload(cls, v):
+        if isinstance(v, str) and v.strip():
+            try: return json.loads(v)
+            except: return None
+        return v
+    class Config:
+        from_attributes = True
 
-    with engine.connect() as conn:
-        trans = conn.begin()
-        try:
-            # 1. Vérifier si la table existe
-            if not inspector.has_table("athlete_profiles"):
-                print("   ⚠️ Table 'athlete_profiles' inexistante.")
-                print("   🛠️ Création de la table complète...")
-                
-                # Création propre compatible Postgres/SQLite
-                is_postgres = "postgresql" in url
-                json_type = "JSONB" if is_postgres else "JSON" # SQLite gère JSON comme TEXT ou JSON selon version, mais SQLAlchemy gère le mapping.
-                
-                # Pour le SQL brut, on utilise TEXT pour SQLite pour être sûr, JSONB pour PG
-                sql_type = "JSONB" if is_postgres else "TEXT"
+# --- PERFORMANCE ---
+class OneRepMaxRequest(BaseModel):
+    weight: float
+    reps: int
+class OneRepMaxResponse(BaseModel):
+    estimated_1rm: float
+    method_used: str
+class ACWRRequest(BaseModel):
+    history: List[Dict[str, Any]]
+class ACWRResponse(BaseModel):
+    ratio: float
+    status: str
+    color: str
+    message: str
+class ProfileAuditRequest(BaseModel):
+    profile_data: Dict[str, Any]
+class ProfileAuditResponse(BaseModel):
+    markdown_report: str
+class StrategyResponse(BaseModel):
+    periodization_title: str
+    phases: List[Any]
+class WeeklyPlanResponse(BaseModel):
+    schedule: List[Any]
+    reasoning: str
+class UserProfileUpdate(BaseModel):
+    profile_data: Dict[str, Any]
+"""
 
-                conn.execute(text(f"""
-                    CREATE TABLE athlete_profiles (
-                        id SERIAL PRIMARY KEY,
-                        user_id INTEGER UNIQUE,
-                        basic_info {sql_type} DEFAULT '{{}}',
-                        physical_metrics {sql_type} DEFAULT '{{}}',
-                        sport_context {sql_type} DEFAULT '{{}}',
-                        performance_baseline {sql_type} DEFAULT '{{}}',
-                        injury_prevention {sql_type} DEFAULT '{{}}',
-                        training_preferences {sql_type} DEFAULT '{{}}',
-                        goals {sql_type} DEFAULT '{{}}',
-                        constraints {sql_type} DEFAULT '{{}}',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                """))
-                print("   ✅ Table 'athlete_profiles' créée avec succès.")
-            
-            else:
-                print("   ✅ Table 'athlete_profiles' trouvée. Vérification des colonnes...")
-                # 2. Vérifier les colonnes manquantes
-                existing_columns = [col['name'] for col in inspector.get_columns("athlete_profiles")]
-                
-                for col in required_columns:
-                    if col not in existing_columns:
-                        print(f"   ➕ Ajout de la colonne manquante : {col}...")
-                        
-                        is_postgres = "postgresql" in url
-                        col_type = "JSONB" if is_postgres else "TEXT" # Safe fallback for SQLite
-                        
-                        conn.execute(text(f"ALTER TABLE athlete_profiles ADD COLUMN {col} {col_type} DEFAULT '{{}}'"))
-                        print(f"      ✅ Colonne {col} ajoutée.")
-                    else:
-                        print(f"      🆗 {col} existe déjà.")
-
-            trans.commit()
-            print("\n✨ BASE DE DONNÉES SYNCHRONISÉE ET PRÊTE !")
-            print("   Toutes les données du Labo, Matrice et Santé seront bien sauvegardées.")
-
-        except Exception as e:
-            trans.rollback()
-            print(f"\n❌ ERREUR CRITIQUE : {e}")
-            if "duplicate column" in str(e):
-                print("   (C'est probablement juste une fausse alerte, la colonne existait déjà).")
+def apply_fix():
+    print(f"🔧 Application du correctif 422 sur : {SCHEMAS_PATH}")
+    os.makedirs(os.path.dirname(SCHEMAS_PATH), exist_ok=True)
+    
+    with open(SCHEMAS_PATH, "w", encoding="utf-8") as f:
+        f.write(NEW_SCHEMAS_CONTENT)
+    
+    print("✅ Schemas mis à jour : Le backend accepte maintenant les chaînes de caractères libres.")
+    print("   -> Relance le serveur Backend (Render ou Local) !")
 
 if __name__ == "__main__":
-    check_and_migrate()
+    apply_fix()

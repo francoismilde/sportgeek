@@ -1,18 +1,7 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import List, Optional, Dict, Any, Union
 from datetime import date, datetime
-from enum import Enum
 import json
-
-# --- ENUMS & TYPES ---
-
-class SportType(str, Enum):
-    RUGBY = "Rugby"
-    FOOTBALL = "Football"
-    CROSSFIT = "CrossFit"
-    HYBRID = "Hybrid"
-    RUNNING = "Running"
-    OTHER = "Autre"
 
 # --- SUB-SCHEMAS FOR PROFILE ---
 
@@ -20,6 +9,7 @@ class BasicInfo(BaseModel):
     pseudo: Optional[str] = None
     email: Optional[str] = None
     birth_date: Optional[str] = None
+    biological_sex: Optional[str] = "Homme" # Ajouté pour compatibilité
     training_age: Optional[int] = 0
 
 class PhysicalMetrics(BaseModel):
@@ -30,7 +20,8 @@ class PhysicalMetrics(BaseModel):
     sleep_quality_avg: Optional[int] = 5
 
 class SportContext(BaseModel):
-    sport: SportType = SportType.OTHER
+    # [FIX 422] On accepte n'importe quelle String venant du Frontend
+    sport: str = "Autre" 
     position: Optional[str] = None
     level: str = "Intermédiaire"
     equipment: List[str] = ["Standard"]
@@ -58,15 +49,14 @@ class AthleteProfileCreate(AthleteProfileBase):
 class AthleteProfileResponse(AthleteProfileBase):
     id: int
     user_id: int
-    created_at: datetime
+    created_at: Optional[datetime] = None
     class Config:
         from_attributes = True
 
-# --- MEMORY SCHEMAS (FIXED) ---
+# --- MEMORY SCHEMAS ---
 
 class CoachMemoryResponse(BaseModel):
     id: int
-    # [FIX] Removed invalid .get() call here
     readiness_score: int = Field(alias="current_context", default=50)
     current_phase: str = "Général"
     flags: Dict[str, bool] = {}
@@ -81,7 +71,7 @@ class CoachMemoryResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# --- LEGACY SCHEMAS (KEPT FOR COMPATIBILITY) ---
+# --- WORKOUT & LEGACY SCHEMAS ---
 
 class WorkoutSetBase(BaseModel):
     exercise_name: str
@@ -123,6 +113,7 @@ class WorkoutSessionCreate(BaseModel):
     energy_level: int = 5
     notes: Optional[str] = None
     sets: List[WorkoutSetCreate] = []
+    ai_analysis: Optional[str] = None
 
 class WorkoutSetResponse(WorkoutSetBase):
     id: int
@@ -161,6 +152,7 @@ class AIWorkoutPlan(BaseModel):
     cooldown: List[str]
 
 # --- USER & AUTH ---
+
 class UserCreate(BaseModel):
     username: str
     email: Optional[str] = None
@@ -170,7 +162,17 @@ class UserResponse(BaseModel):
     id: int
     username: str
     email: Optional[str] = None
-    profile_data: Optional[str] = None 
+    profile_data: Optional[Dict[str, Any]] = None 
+    
+    @field_validator('profile_data', mode='before')
+    def parse_profile_data(cls, v):
+        if v is None: return {}
+        if isinstance(v, dict): return v
+        if isinstance(v, str):
+            try: return json.loads(v)
+            except: return {}
+        return v
+
     class Config:
         from_attributes = True
 
@@ -182,14 +184,9 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 # --- FEED ---
-class FeedItemType(str, Enum):
-    INFO = "INFO"
-    ANALYSIS = "ANALYSIS"
-    ACTION = "ACTION"
-    ALERT = "ALERT"
 
 class FeedItemCreate(BaseModel):
-    type: FeedItemType
+    type: str
     title: str
     message: str
     priority: int = 1
@@ -236,28 +233,3 @@ class WeeklyPlanResponse(BaseModel):
     reasoning: str
 class UserProfileUpdate(BaseModel):
     profile_data: Dict[str, Any]
-
-
-# --- MISSING SCHEMAS FOR UPDATES ---
-
-class AthleteProfileUpdate(AthleteProfileBase):
-    pass
-
-class ProfileSectionUpdate(BaseModel):
-    section_data: Dict[str, Any]
-
-class DailyMetrics(BaseModel):
-    date: str
-    weight: Optional[float] = None
-    sleep_quality: Optional[int] = None
-    resting_heart_rate: Optional[int] = None
-    hrv: Optional[int] = None
-    energy_level: Optional[int] = None
-    muscle_soreness: Optional[int] = None
-    perceived_stress: Optional[int] = None
-    sleep_duration: Optional[float] = None
-
-class GoalProgressUpdate(BaseModel):
-    progress_value: int
-    progress_note: Optional[str] = None
-    achieved: bool = False
