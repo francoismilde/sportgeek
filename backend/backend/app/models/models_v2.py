@@ -5,32 +5,22 @@ from app.core.database import Base
 
 class User(Base):
     __tablename__ = "users"
-
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     email = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String)
-    
-    # Anciens champs (Legacy support)
     profile_data = Column(Text, nullable=True)
     strategy_data = Column(Text, nullable=True)
     weekly_plan_data = Column(Text, nullable=True)
     draft_workout_data = Column(Text, nullable=True)
-
-    # Relations
     workouts = relationship("WorkoutSession", back_populates="owner")
     feed_items = relationship("FeedItem", back_populates="owner", cascade="all, delete-orphan")
-    
-    # [NOUVEAU] Relation vers le Profil Enrichi
     athlete_profile = relationship("AthleteProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 class AthleteProfile(Base):
     __tablename__ = "athlete_profiles"
-
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True)
-
-    # Blocs de données JSONB
     basic_info = Column(JSON, default={})
     physical_metrics = Column(JSON, default={})
     sport_context = Column(JSON, default={})
@@ -39,20 +29,15 @@ class AthleteProfile(Base):
     training_preferences = Column(JSON, default={})
     goals = Column(JSON, default={})
     constraints = Column(JSON, default={})
-
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
     user = relationship("User", back_populates="athlete_profile")
     coach_memory = relationship("CoachMemory", back_populates="athlete_profile", uselist=False, cascade="all, delete-orphan")
 
 class CoachMemory(Base):
     __tablename__ = "coach_memories"
-
     id = Column(Integer, primary_key=True, index=True)
     athlete_profile_id = Column(Integer, ForeignKey("athlete_profiles.id"), unique=True)
-
-    # Mémoire contextuelle IA
     metadata_info = Column(JSON, default={})
     current_context = Column(JSON, default={})
     response_patterns = Column(JSON, default={})
@@ -63,12 +48,9 @@ class CoachMemory(Base):
     athlete_preferences = Column(JSON, default={})
     coach_notes = Column(JSON, default={})
     memory_flags = Column(JSON, default={})
-
     last_updated = Column(DateTime(timezone=True), server_default=func.now())
-
     athlete_profile = relationship("AthleteProfile", back_populates="coach_memory")
 
-# --- MODÈLES EXISTANTS ---
 class WorkoutSession(Base):
     __tablename__ = "workout_sessions"
     id = Column(Integer, primary_key=True, index=True)

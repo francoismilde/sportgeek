@@ -1,6 +1,6 @@
 from datetime import date
 from typing import Dict, Any
-from app.models import sql_models
+from app.models import models_v2
 
 # Constantes de validation
 VALID_SPORT_POSITIONS = {
@@ -17,7 +17,7 @@ class CoachLogic:
         return True
 
     @staticmethod
-    def initialize_memory(profile: sql_models.AthleteProfile) -> sql_models.CoachMemory:
+    def initialize_memory(profile: models_v2.AthleteProfile) -> models_v2.CoachMemory:
         """Crée la structure initiale de la mémoire du coach based sur le profil"""
         sport = profile.sport_context.get('sport', 'Autre')
         
@@ -43,7 +43,7 @@ class CoachLogic:
             "adaptation_window_open": True
         }
 
-        memory = sql_models.CoachMemory(
+        memory = models_v2.CoachMemory(
             athlete_profile_id=profile.id,
             sport_specific_insights=insights,
             current_context=context,
@@ -53,7 +53,7 @@ class CoachLogic:
         return memory
 
     @staticmethod
-    def calculate_readiness(profile: sql_models.AthleteProfile) -> int:
+    def calculate_readiness(profile: models_v2.AthleteProfile) -> int:
         """Algorithme simple de readiness basé sur les métriques"""
         base_score = 80
         
@@ -69,7 +69,7 @@ class CoachLogic:
         return max(0, min(100, base_score))
 
     @staticmethod
-    def update_daily(memory: sql_models.CoachMemory, profile: sql_models.AthleteProfile):
+    def update_daily(memory: models_v2.CoachMemory, profile: models_v2.AthleteProfile):
         """Mise à jour quotidienne (Batch Job simulation)"""
         # Recalcul Readiness
         new_readiness = CoachLogic.calculate_readiness(profile)

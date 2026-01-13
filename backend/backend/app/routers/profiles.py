@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.models import sql_models, schemas
+from app.models import models_v2, schemas
 from app.dependencies import get_current_user
 from app.services.coach_logic import CoachLogic
 
@@ -12,11 +12,11 @@ router = APIRouter(
 
 @router.get("/profiles/me", response_model=schemas.AthleteProfileResponse)
 async def get_my_profile(
-    current_user: sql_models.User = Depends(get_current_user),
+    current_user: models_v2.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if not current_user.athlete_profile:
-        profile = sql_models.AthleteProfile(user_id=current_user.id)
+        profile = models_v2.AthleteProfile(user_id=current_user.id)
         db.add(profile)
         db.commit()
         db.refresh(profile)
@@ -26,7 +26,7 @@ async def get_my_profile(
 @router.post("/profiles/complete", response_model=schemas.AthleteProfileResponse)
 async def complete_profile(
     profile_data: schemas.AthleteProfileCreate,
-    current_user: sql_models.User = Depends(get_current_user),
+    current_user: models_v2.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     sport = profile_data.sport_context.sport
@@ -38,7 +38,7 @@ async def complete_profile(
 
     db_profile = current_user.athlete_profile
     if not db_profile:
-        db_profile = sql_models.AthleteProfile(user_id=current_user.id)
+        db_profile = models_v2.AthleteProfile(user_id=current_user.id)
         db.add(db_profile)
     
     # 1. Update basic fields
@@ -64,7 +64,7 @@ async def complete_profile(
 
 @router.get("/coach-memories/me", response_model=schemas.CoachMemoryResponse)
 async def get_my_coach_memory(
-    current_user: sql_models.User = Depends(get_current_user),
+    current_user: models_v2.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if not current_user.athlete_profile or not current_user.athlete_profile.coach_memory:
@@ -73,7 +73,7 @@ async def get_my_coach_memory(
 
 @router.post("/coach-memories/recalculate")
 async def force_recalculate(
-    current_user: sql_models.User = Depends(get_current_user),
+    current_user: models_v2.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     profile = current_user.athlete_profile
