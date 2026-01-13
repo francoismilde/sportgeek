@@ -11,17 +11,14 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=True)
     hashed_password = Column(String)
     
-    # Anciens champs (Legacy support pour éviter des erreurs de migration si colonnes existent encore)
+    # Legacy fields
     profile_data = Column(JSON, default={}) 
     strategy_data = Column(Text, nullable=True)
     weekly_plan_data = Column(Text, nullable=True)
     draft_workout_data = Column(Text, nullable=True)
 
-    # Relations
     workouts = relationship("WorkoutSession", back_populates="owner")
     feed_items = relationship("FeedItem", back_populates="owner", cascade="all, delete-orphan")
-    
-    # Relation V2 vers le Profil Enrichi
     athlete_profile = relationship("AthleteProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 class AthleteProfile(Base):
@@ -30,7 +27,6 @@ class AthleteProfile(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True)
 
-    # Blocs de données JSON (Hybride)
     basic_info = Column(JSON, default={})
     physical_metrics = Column(JSON, default={})
     sport_context = Column(JSON, default={})
@@ -52,9 +48,9 @@ class CoachMemory(Base):
     id = Column(Integer, primary_key=True, index=True)
     athlete_profile_id = Column(Integer, ForeignKey("athlete_profiles.id"), unique=True)
 
-    # Mémoire contextuelle IA
-    metadata_info = Column(JSON, default={}) # Renommé de metadata vers metadata_info pour éviter conflit réservé SQL parfois
-    metadata = Column(JSON, default={})      # Alias pour compatibilité
+    # CORRECTION ICI : On utilise metadata_info au lieu de metadata
+    metadata_info = Column(JSON, default={}) 
+    
     current_context = Column(JSON, default={})
     response_patterns = Column(JSON, default={})
     performance_baselines = Column(JSON, default={})
@@ -69,8 +65,7 @@ class CoachMemory(Base):
 
     athlete_profile = relationship("AthleteProfile", back_populates="coach_memory")
 
-# --- MODÈLES EXISTANTS (Inchés mais nécessaires) ---
-
+# Les autres classes (WorkoutSession, WorkoutSet, FeedItem) restent inchangées...
 class WorkoutSession(Base):
     __tablename__ = "workout_sessions"
     id = Column(Integer, primary_key=True, index=True)
@@ -82,7 +77,6 @@ class WorkoutSession(Base):
     notes = Column(Text, nullable=True)      
     ai_analysis = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
     owner = relationship("User", back_populates="workouts")
     sets = relationship("WorkoutSet", back_populates="session", cascade="all, delete-orphan")
 
@@ -97,7 +91,6 @@ class WorkoutSet(Base):
     rpe = Column(Float, default=0.0)
     rest_seconds = Column(Integer, default=0)
     metric_type = Column(String, nullable=False, default="LOAD_REPS") 
-    
     session = relationship("WorkoutSession", back_populates="sets")
 
 class FeedItem(Base):
@@ -112,5 +105,4 @@ class FeedItem(Base):
     is_completed = Column(Boolean, default=False)
     priority = Column(Integer, default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
     owner = relationship("User", back_populates="feed_items")
