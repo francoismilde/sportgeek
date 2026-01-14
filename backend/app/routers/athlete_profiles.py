@@ -1,5 +1,6 @@
 """
-Routeur pour la gestion des profils athlètes enrichis
+Routeur unifié pour la gestion des profils athlètes
+Gère toutes les routes /api/v1/profiles/*
 """
 import json
 import logging
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 router = APIRouter(
-    tags=["Athlete Profiles v2"]  # SUPPRIME: prefix="/api/v1/profiles"
+    tags=["Profiles"]  # Tags unifiés
 )
 
 def transform_mobile_performance_data(raw_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -152,77 +153,7 @@ def transform_mobile_performance_data(raw_data: Dict[str, Any]) -> Dict[str, Any
     logger.info(f"📊 Données performance transformées: {transformed}")
     return transformed
 
-@router.post("/complete", response_model=schemas.AthleteProfileResponse, status_code=status.HTTP_201_CREATED)
-async def create_complete_profile(
-    profile_data: Dict[str, Any],
-    db: Session = Depends(get_db),
-    current_user: sql_models.User = Depends(get_current_user)
-):
-    """
-    Crée un profil athlète complet via le wizard
-    """
-    logger.info(f"Création de profil demandée pour l'utilisateur : {current_user.id}")
-    
-    # Vérifier si l'utilisateur a déjà un profil
-    existing_profile = db.query(sql_models.AthleteProfile).filter(
-        sql_models.AthleteProfile.user_id == current_user.id
-    ).first()
-    
-    if existing_profile:
-        logger.warning(f"Profil déjà existant pour user {current_user.id}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Un profil existe déjà pour cet utilisateur"
-        )
-    
-    # Valider les données du profil
-    try:
-        validate_athlete_profile(profile_data)
-    except ValueError as e:
-        logger.error(f"Erreur de validation : {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    
-    # Traiter les données de performance
-    if 'performance_baseline' in profile_data:
-        perf_data = profile_data['performance_baseline']
-        if perf_data:
-            transformed_perf = transform_mobile_performance_data(perf_data)
-            profile_data['performance_baseline'] = transformed_perf
-    
-    # Créer le profil
-    athlete_profile = sql_models.AthleteProfile(
-        user_id=current_user.id,
-        basic_info=profile_data.get('basic_info', {}),
-        physical_metrics=profile_data.get('physical_metrics', {}),
-        sport_context=profile_data.get('sport_context', {}),
-        performance_baseline=profile_data.get('performance_baseline', {}),
-        injury_prevention=profile_data.get('injury_prevention', {}),
-        training_preferences=profile_data.get('training_preferences', {}),
-        goals=profile_data.get('goals', {}),
-        constraints=profile_data.get('constraints', {})
-    )
-    
-    try:
-        db.add(athlete_profile)
-        db.commit()
-        db.refresh(athlete_profile)
-        
-        # Initialiser la mémoire du coach
-        initialize_coach_memory(athlete_profile, db)
-        
-        logger.info(f"Profil créé avec succès pour user {current_user.id}")
-        return athlete_profile
-        
-    except IntegrityError as e:
-        db.rollback()
-        logger.error(f"Erreur d'intégrité DB : {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Erreur d'intégrité des données"
-        )
+# --- ROUTE CRITIQUE POUR LE MOBILE ---
 
 @router.get("/me", response_model=schemas.AthleteProfileResponse)
 async def get_my_profile(
@@ -230,17 +161,35 @@ async def get_my_profile(
     current_user: sql_models.User = Depends(get_current_user)
 ):
     """
-    Récupère le profil de l'utilisateur connecté
+    Récupère le profil de l'utilisateur connecté.
+    Si aucun profil n'existe, crée un profil vide automatiquement.
+    Route appelée par le mobile: GET /api/v1/profiles/me
     """
     profile = db.query(sql_models.AthleteProfile).filter(
         sql_models.AthleteProfile.user_id == current_user.id
     ).first()
     
     if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profil non trouvé pour cet utilisateur"
+        logger.info(f"📝 Aucun profil trouvé pour user {current_user.id}, création d'un profil vide")
+        
+        # Créer un profil vide
+        profile = sql_models.AthleteProfile(
+            user_id=current_user.id,
+            basic_info={"pseudo": current_user.username},
+            physical_metrics={},
+            sport_context={},
+            performance_baseline={},
+            injury_prevention={},
+            training_preferences={},
+            goals={},
+            constraints={}
         )
+        
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        
+        logger.info(f"✅ Profil vide créé pour user {current_user.id}")
     
     return profile
 
@@ -252,6 +201,8 @@ async def update_my_profile(
 ):
     """
     Met à jour le profil de l'utilisateur connecté.
+    Si le profil n'existe pas, le crée automatiquement.
+    Route appelée par le mobile: PUT /api/v1/profiles/me
     """
     logger.info(f"⚡ UPDATE /me demandé pour user : {current_user.id}")
     
@@ -260,11 +211,39 @@ async def update_my_profile(
     ).first()
     
     if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profil non trouvé"
+        logger.info(f"📝 Création de profil via PUT /me pour user {current_user.id}")
+        
+        # Valider les données du profil
+        try:
+            validate_athlete_profile(profile_update.model_dump(exclude_unset=True))
+        except ValueError as e:
+            logger.error(f"Erreur de validation : {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        
+        # Créer le profil
+        profile = sql_models.AthleteProfile(
+            user_id=current_user.id,
+            basic_info=profile_update.basic_info or {},
+            physical_metrics=profile_update.physical_metrics or {},
+            sport_context=profile_update.sport_context or {},
+            performance_baseline=profile_update.performance_baseline or {},
+            injury_prevention=profile_update.injury_prevention or {},
+            training_preferences=profile_update.training_preferences or {},
+            goals=profile_update.goals or {},
+            constraints=profile_update.constraints or {}
         )
+        
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        
+        logger.info(f"✅ Profil créé via PUT /me pour user {current_user.id}")
+        return profile
     
+    # Si profil existe, mise à jour
     # Conversion Pydantic -> Dict en excluant les valeurs None
     update_dict = profile_update.model_dump(exclude_unset=True)
     
@@ -310,6 +289,81 @@ async def update_my_profile(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erreur de mise à jour: {str(e)}"
         )
+
+@router.post("/complete", response_model=schemas.AthleteProfileResponse, status_code=status.HTTP_201_CREATED)
+async def create_complete_profile(
+    profile_data: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Crée un profil athlète complet via le wizard
+    Route alternative pour création via wizard
+    """
+    logger.info(f"Création de profil wizard pour l'utilisateur : {current_user.id}")
+    
+    # Vérifier si l'utilisateur a déjà un profil
+    existing_profile = db.query(sql_models.AthleteProfile).filter(
+        sql_models.AthleteProfile.user_id == current_user.id
+    ).first()
+    
+    if existing_profile:
+        logger.warning(f"Profil déjà existant pour user {current_user.id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Un profil existe déjà pour cet utilisateur. Utilisez PUT /me pour mettre à jour."
+        )
+    
+    # Valider les données du profil
+    try:
+        validate_athlete_profile(profile_data)
+    except ValueError as e:
+        logger.error(f"Erreur de validation : {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    
+    # Traiter les données de performance
+    if 'performance_baseline' in profile_data:
+        perf_data = profile_data['performance_baseline']
+        if perf_data:
+            transformed_perf = transform_mobile_performance_data(perf_data)
+            profile_data['performance_baseline'] = transformed_perf
+    
+    # Créer le profil
+    athlete_profile = sql_models.AthleteProfile(
+        user_id=current_user.id,
+        basic_info=profile_data.get('basic_info', {}),
+        physical_metrics=profile_data.get('physical_metrics', {}),
+        sport_context=profile_data.get('sport_context', {}),
+        performance_baseline=profile_data.get('performance_baseline', {}),
+        injury_prevention=profile_data.get('injury_prevention', {}),
+        training_preferences=profile_data.get('training_preferences', {}),
+        goals=profile_data.get('goals', {}),
+        constraints=profile_data.get('constraints', {})
+    )
+    
+    try:
+        db.add(athlete_profile)
+        db.commit()
+        db.refresh(athlete_profile)
+        
+        # Initialiser la mémoire du coach
+        initialize_coach_memory(athlete_profile, db)
+        
+        logger.info(f"Profil wizard créé avec succès pour user {current_user.id}")
+        return athlete_profile
+        
+    except IntegrityError as e:
+        db.rollback()
+        logger.error(f"Erreur d'intégrité DB : {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Erreur d'intégrité des données"
+        )
+
+# --- AUTRES ROUTES (optionnelles, pour compatibilité) ---
 
 @router.get("/{profile_id}", response_model=schemas.AthleteProfileResponse)
 async def get_profile(
@@ -430,179 +484,6 @@ async def update_profile_section(
     
     return {
         "message": "Section mise à jour avec succès"
-    }
-
-@router.post("/{profile_id}/metrics")
-async def add_daily_metrics(
-    profile_id: int,
-    metrics: schemas.DailyMetrics,
-    db: Session = Depends(get_db),
-    current_user: sql_models.User = Depends(get_current_user)
-):
-    """
-    Ajoute des métriques quotidiennes au profil
-    """
-    profile = db.query(sql_models.AthleteProfile).filter(
-        sql_models.AthleteProfile.id == profile_id,
-        sql_models.AthleteProfile.user_id == current_user.id
-    ).first()
-    
-    if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profil non trouvé"
-        )
-    
-    # Ici, on pourrait stocker les métriques dans une table séparée
-    # Pour l'instant, on les ajoute aux métriques physiques
-    physical_metrics = profile.physical_metrics or {}
-    
-    if 'daily_metrics' not in physical_metrics:
-        physical_metrics['daily_metrics'] = []
-    
-    physical_metrics['daily_metrics'].append(metrics.model_dump())
-    
-    # Garder seulement les 30 derniers jours
-    if len(physical_metrics['daily_metrics']) > 30:
-        physical_metrics['daily_metrics'] = physical_metrics['daily_metrics'][-30:]
-    
-    # Mettre à jour les métriques agrégées
-    if metrics.resting_heart_rate:
-        physical_metrics['resting_heart_rate'] = metrics.resting_heart_rate
-        physical_metrics['last_updated'] = metrics.date
-    
-    profile.physical_metrics = physical_metrics
-    db.commit()
-    
-    return {"message": "Métriques quotidiennes enregistrées"}
-
-@router.post("/{profile_id}/goals", status_code=status.HTTP_201_CREATED)
-async def add_goal(
-    profile_id: int,
-    goal_data: Dict[str, Any],
-    db: Session = Depends(get_db),
-    current_user: sql_models.User = Depends(get_current_user)
-):
-    """
-    Ajoute un nouvel objectif au profil
-    """
-    profile = db.query(sql_models.AthleteProfile).filter(
-        sql_models.AthleteProfile.id == profile_id,
-        sql_models.AthleteProfile.user_id == current_user.id
-    ).first()
-    
-    if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profil non trouvé"
-        )
-    
-    goals = profile.goals or {"secondary_goals": [], "milestones": []}
-    
-    if goal_data.get('is_primary', False):
-        goals['primary_goal'] = goal_data.get('description', '')
-        goals['target_date'] = goal_data.get('target_date')
-        goals['target_metrics'] = goal_data.get('target_metrics', {})
-    else:
-        if 'secondary_goals' not in goals:
-            goals['secondary_goals'] = []
-        goals['secondary_goals'].append(goal_data.get('description', ''))
-    
-    profile.goals = goals
-    db.commit()
-    
-    return {"message": "Objectif ajouté avec succès"}
-
-@router.put("/{profile_id}/goals/{goal_id}/progress")
-async def update_goal_progress(
-    profile_id: int,
-    goal_id: str,
-    progress: schemas.GoalProgressUpdate,
-    db: Session = Depends(get_db),
-    current_user: sql_models.User = Depends(get_current_user)
-):
-    """
-    Met à jour la progression d'un objectif
-    """
-    profile = db.query(sql_models.AthleteProfile).filter(
-        sql_models.AthleteProfile.id == profile_id,
-        sql_models.AthleteProfile.user_id == current_user.id
-    ).first()
-    
-    if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profil non trouvé"
-        )
-    
-    goals = profile.goals or {}
-    
-    if goal_id == "primary":
-        if 'milestones' not in goals:
-            goals['milestones'] = []
-        
-        goals['milestones'].append({
-            "date": progress.progress_note.split(" - ")[0] if progress.progress_note else "",
-            "description": progress.progress_note or f"Progression: {progress.progress_value}%",
-            "progress": progress.progress_value,
-            "achieved": progress.achieved
-        })
-    else:
-        # Pour les objectifs secondaires
-        pass
-    
-    profile.goals = goals
-    db.commit()
-    
-    return {"message": "Progression mise à jour"}
-
-@router.post("/{profile_id}/import")
-async def import_external_data(
-    profile_id: int,
-    import_data: Dict[str, Any],
-    db: Session = Depends(get_db),
-    current_user: sql_models.User = Depends(get_current_user)
-):
-    """
-    Importe des données depuis des sources externes
-    """
-    profile = db.query(sql_models.AthleteProfile).filter(
-        sql_models.AthleteProfile.id == profile_id,
-        sql_models.AthleteProfile.user_id == current_user.id
-    ).first()
-    
-    if not profile:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Profil non trouvé"
-        )
-    
-    source = import_data.get('source', '').lower()
-    data = import_data.get('data', {})
-    
-    if source == 'strava':
-        if 'weight' in data:
-            physical_metrics = profile.physical_metrics or {}
-            physical_metrics['weight'] = data['weight']
-            profile.physical_metrics = physical_metrics
-    
-    elif source == 'garmin':
-        if 'resting_heart_rate' in data:
-            physical_metrics = profile.physical_metrics or {}
-            physical_metrics['resting_heart_rate'] = data['resting_heart_rate']
-            profile.physical_metrics = physical_metrics
-    
-    elif source == 'whoop':
-        if 'recovery' in data:
-            physical_metrics = profile.physical_metrics or {}
-            physical_metrics['hrv_baseline'] = data.get('hrv', physical_metrics.get('hrv_baseline'))
-            profile.physical_metrics = physical_metrics
-    
-    db.commit()
-    
-    return {
-        "message": f"Données importées depuis {source}",
-        "imported_fields": list(data.keys())
     }
 
 @router.get("/{profile_id}/completion")

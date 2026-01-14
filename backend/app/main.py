@@ -14,7 +14,7 @@ from .routers import (
     coach, 
     user, 
     feed,
-    profiles  # ✅ Déjà présent
+    athlete_profiles  # ✅ Uniquement le nouveau routeur unifié
 )
 from app.core.database import engine, Base
 # Import des modèles
@@ -64,12 +64,11 @@ async def global_exception_handler(request: Request, exc: Exception):
 # 1. Auth (inchangé)
 app.include_router(auth.router)
 
-# 2. PROFILES - CORRECTION CRITIQUE
-# Le routeur profiles DOIT avoir le préfixe /api/v1/profiles
-# pour matcher l'URL appelée par l'app mobile: /api/v1/profiles/me
+# 2. PROFILES - UNIQUE ROUTEUR UNIFIÉ
+# Supprimez l'inclusion de l'ancien routeur profiles.router
 app.include_router(
-    profiles.router, 
-    prefix="/api/v1/profiles",  # ⚠️ TRÈS IMPORTANT
+    athlete_profiles.router, 
+    prefix="/api/v1/profiles",  # ✅ Préfixe unique pour toutes les routes
     tags=["Profiles"]
 )
 
