@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 router = APIRouter(
-    prefix="/api/v1/profiles",
-    tags=["Athlete Profiles v2"]
+    tags=["Athlete Profiles v2"]  # SUPPRIME: prefix="/api/v1/profiles"
 )
 
 def transform_mobile_performance_data(raw_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -32,13 +31,27 @@ def transform_mobile_performance_data(raw_data: Dict[str, Any]) -> Dict[str, Any
     if not raw_data:
         return {}
     
+    # Nettoyer d'abord les valeurs vides, nulles ou invalides
+    cleaned_data = {}
+    for key, value in raw_data.items():
+        # Filtrer les valeurs vraiment vides
+        if value is None:
+            continue
+        if isinstance(value, str) and value.strip() == "":
+            continue
+        if value == 0 or value == "0" or value == 0.0:
+            continue
+        if value == "null" or value == "undefined":
+            continue
+        
+        cleaned_data[key] = value
+    
     transformed = {}
     
     # 1. Extraire les valeurs numériques des résultats formatés
-    if raw_data.get('run_vma_est') and raw_data['run_vma_est'] not in ["", None]:
-        # Ex: "Vitesse Critique : 14.5 km/h" -> extraire 14.5
+    if cleaned_data.get('run_vma_est'):
         try:
-            match = re.search(r'(\d+\.?\d*)', str(raw_data['run_vma_est']))
+            match = re.search(r'(\d+\.?\d*)', str(cleaned_data['run_vma_est']))
             if match:
                 vma_value = float(match.group(1))
                 transformed['run_vma'] = vma_value
@@ -46,43 +59,46 @@ def transform_mobile_performance_data(raw_data: Dict[str, Any]) -> Dict[str, Any
                 if vma_value > 0:
                     transformed['running_time_5k'] = int(5000 / (vma_value * 1000/3600))
         except Exception as e:
-            logger.warning(f"Erreur extraction run_vma_est: {e}")
+            logger.debug(f"Erreur extraction run_vma_est: {e}")
     
-    if raw_data.get('cycling_ftp_est') and raw_data['cycling_ftp_est'] not in ["", None]:
-        # Ex: "CP (FTP Est.) : 280 W" -> extraire 280
+    if cleaned_data.get('cycling_ftp_est'):
         try:
-            match = re.search(r'(\d+\.?\d*)', str(raw_data['cycling_ftp_est']))
+            match = re.search(r'(\d+\.?\d*)', str(cleaned_data['cycling_ftp_est']))
             if match:
                 transformed['cycling_ftp'] = int(float(match.group(1)))
         except Exception as e:
-            logger.warning(f"Erreur extraction cycling_ftp_est: {e}")
+            logger.debug(f"Erreur extraction cycling_ftp_est: {e}")
     
-    if raw_data.get('swim_css_est') and raw_data['swim_css_est'] not in ["", None]:
-        # Ex: "CSS Pace : 1:45/100m" -> convertir en secondes
+    if cleaned_data.get('swim_css_est'):
         try:
-            match = re.search(r'(\d+):(\d+)', str(raw_data['swim_css_est']))
+            match = re.search(r'(\d+):(\d+)', str(cleaned_data['swim_css_est']))
             if match:
                 minutes = int(match.group(1))
                 seconds = int(match.group(2))
                 transformed['swimming_time_200m'] = minutes * 60 + seconds
         except Exception as e:
-            logger.warning(f"Erreur extraction swim_css_est: {e}")
+            logger.debug(f"Erreur extraction swim_css_est: {e}")
     
     # 2. Calculer les valeurs dérivées à partir des inputs bruts
     # Course à pied - Calcul VMA/CS
     try:
         required_fields = ['run_short_dist', 'run_short_min', 'run_short_sec', 
                           'run_long_dist', 'run_long_min', 'run_long_sec']
-        if all(k in raw_data and raw_data[k] not in [None, "", 0] for k in required_fields):
-            d1 = float(raw_data['run_short_dist'])
-            t1 = float(raw_data['run_short_min']) * 60 + float(raw_data['run_short_sec'])
-            d2 = float(raw_data['run_long_dist'])
-            t2 = float(raw_data['run_long_min']) * 60 + float(raw_data['run_long_sec'])
+        
+        # Vérifier que tous les champs requis sont présents et valides
+        fields_present = all(k in cleaned_data for k in required_fields)
+        fields_valid = all(cleaned_data.get(k) not in [None, "", 0, 0.0] for k in required_fields)
+        
+        if fields_present and fields_valid:
+            d1 = float(cleaned_data['run_short_dist'])
+            t1 = float(cleaned_data['run_short_min']) * 60 + float(cleaned_data['run_short_sec'])
+            d2 = float(cleaned_data['run_long_dist'])
+            t2 = float(cleaned_data['run_long_min']) * 60 + float(cleaned_data['run_long_sec'])
             
             if t2 > t1 and d2 > d1:
                 cs_mps = (d2 - d1) / (t2 - t1)
                 vma_kmh = cs_mps * 3.6
-                if 'run_vma' not in transformed:  # Ne pas écraser si déjà extrait
+                if 'run_vma' not in transformed:
                     transformed['run_vma'] = round(vma_kmh, 1)
                 # Convertir en temps 5k pour compatibilité API
                 if vma_kmh > 0 and 'running_time_5k' not in transformed:
@@ -94,40 +110,44 @@ def transform_mobile_performance_data(raw_data: Dict[str, Any]) -> Dict[str, Any
     try:
         required_fields = ['bike_short_min', 'bike_short_sec', 'bike_short_watts',
                           'bike_long_min', 'bike_long_sec', 'bike_long_watts']
-        if all(k in raw_data and raw_data[k] not in [None, "", 0] for k in required_fields):
-            t1 = float(raw_data['bike_short_min']) * 60 + float(raw_data['bike_short_sec'])
-            p1 = float(raw_data['bike_short_watts'])
-            t2 = float(raw_data['bike_long_min']) * 60 + float(raw_data['bike_long_sec'])
-            p2 = float(raw_data['bike_long_watts'])
+        
+        fields_present = all(k in cleaned_data for k in required_fields)
+        fields_valid = all(cleaned_data.get(k) not in [None, "", 0, 0.0] for k in required_fields)
+        
+        if fields_present and fields_valid:
+            t1 = float(cleaned_data['bike_short_min']) * 60 + float(cleaned_data['bike_short_sec'])
+            p1 = float(cleaned_data['bike_short_watts'])
+            t2 = float(cleaned_data['bike_long_min']) * 60 + float(cleaned_data['bike_long_sec'])
+            p2 = float(cleaned_data['bike_long_watts'])
             
             if t2 != t1:
                 w1 = p1 * t1
                 w2 = p2 * t2
                 cp = (w2 - w1) / (t2 - t1)
-                if 'cycling_ftp' not in transformed:  # Ne pas écraser si déjà extrait
+                if 'cycling_ftp' not in transformed:
                     transformed['cycling_ftp'] = int(cp)
     except Exception as e:
         logger.debug(f"Calcul cycling non effectué: {e}")
     
     # 3. Copier les autres champs numériques directement
     numeric_fields = ['run_sprint_max', 'bike_peak_5s', 'squat_1rm', 'bench_1rm', 
-                     'deadlift_1rm', 'pull_load', 'run_vma']
+                     'deadlift_1rm', 'pull_load', 'run_vma', 'cycling_ftp']
     
     for field in numeric_fields:
-        if field in raw_data and raw_data[field] not in [None, "", 0]:
+        if field in cleaned_data:
             try:
-                transformed[field] = float(raw_data[field])
+                transformed[field] = float(cleaned_data[field])
             except (ValueError, TypeError):
                 pass
     
-    # 4. Garder aussi les données brutes pour référence (sans les valeurs vides)
-    raw_mobile_data = {}
-    for key, value in raw_data.items():
-        if value not in [None, "", 0]:
-            raw_mobile_data[key] = value
+    # 4. Pour compatibilité avec le schéma Pydantic
+    # Convertir les champs spécifiques vers les noms d'API attendus
+    if 'run_vma' in transformed:
+        transformed['running_vma'] = transformed.pop('run_vma')
     
-    if raw_mobile_data:
-        transformed['raw_mobile_data'] = raw_mobile_data
+    # 5. Garder les données brutes nettoyées pour référence
+    if cleaned_data:
+        transformed['raw_mobile_data'] = cleaned_data
     
     logger.info(f"📊 Données performance transformées: {transformed}")
     return transformed
@@ -232,7 +252,6 @@ async def update_my_profile(
 ):
     """
     Met à jour le profil de l'utilisateur connecté.
-    Nouvelle route pour résoudre l'erreur 405.
     """
     logger.info(f"⚡ UPDATE /me demandé pour user : {current_user.id}")
     
@@ -270,11 +289,9 @@ async def update_my_profile(
         
         for section, data in update_dict.items():
             if section in json_fields and data is not None:
-                # SQLAlchemy gère automatiquement la sérialisation JSON
                 setattr(profile, section, data)
                 updated_sections.append(section)
             elif hasattr(profile, section) and data is not None:
-                # Pour les champs non-JSON (comme updated_at)
                 setattr(profile, section, data)
         
         # Mettre à jour le timestamp
