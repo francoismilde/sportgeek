@@ -274,7 +274,6 @@ class CoachMemoryResponse(BaseModel):
     
     # Pour inclure les engrammes dans la réponse de mémoire si besoin, 
     # mais pour l'instant on les charge via endpoint dédié.
-    
     @field_validator('readiness_score', mode='before')
     def extract_readiness(cls, v):
         if isinstance(v, dict):
@@ -484,3 +483,23 @@ class GoalProgressUpdate(BaseModel):
 
 class AthleteProfileUpdate(AthleteProfileBase):
     pass
+
+# --- AJOUTS POUR COACH MEMORY ROUTER (FIX 404/500) ---
+class CoachMemoryOut(BaseModel):
+    id: int
+    athlete_profile_id: int
+    current_context: Optional[Dict[str, Any]] = None
+    memory_flags: Optional[Dict[str, Any]] = None
+    
+    class Config:
+        from_attributes = True
+
+class CoachMemoryCreate(BaseModel):
+    type: str
+    impact: str = "INFO"
+    status: str = "ACTIVE"
+    content: str
+    tags: List[str] = []
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    user_id: Optional[int] = None
