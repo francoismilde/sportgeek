@@ -65,7 +65,6 @@ class CoachMemory(Base):
     athlete_profile_id = Column(Integer, ForeignKey("athlete_profiles.id"), unique=True)
 
     metadata_info = Column(JSON, default={}) 
-    
     current_context = Column(JSON, default={})
     response_patterns = Column(JSON, default={})
     performance_baselines = Column(JSON, default={})
@@ -80,7 +79,7 @@ class CoachMemory(Base):
 
     athlete_profile = relationship("AthleteProfile", back_populates="coach_memory")
     
-    # [NOUVEAU] Relation vers les Engrammes
+    # ✅ RÉINTÉGRATION : Relation vers les Engrammes
     engrams = relationship("CoachEngram", back_populates="memory", cascade="all, delete-orphan")
 
 class CoachEngram(Base):
@@ -102,7 +101,7 @@ class CoachEngram(Base):
     start_date = Column(DateTime(timezone=True), server_default=func.now())
     end_date = Column(DateTime(timezone=True), nullable=True)
     
-    tags = Column(JSON, default=[]) # Ex: ["genou", "squat", "douleur"]
+    tags = Column(JSON, default=[])
 
     # Relation parente
     memory = relationship("CoachMemory", back_populates="engrams")
