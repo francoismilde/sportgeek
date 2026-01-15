@@ -1439,6 +1439,20 @@ class CoachEngramResponse(CoachEngramBase):
 
 # --- MEMORY SCHEMAS ---
 
+# 1️⃣ D'abord, on définit à quoi ressemble un souvenir pour l'API
+class CoachEngramResponse(BaseModel):
+    id: int
+    type: str  # Ex: INJURY_REPORT, LIFE_CONSTRAINT
+    impact: str = "INFO"
+    status: str = "ACTIVE"
+    content: str
+    tags: List[str] = []
+    created_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+# 2️⃣ Ensuite, on l'ajoute dans la réponse de la mémoire
 class CoachMemoryResponse(BaseModel):
     id: int
     readiness_score: int = Field(alias="current_context", default=50)
@@ -1446,9 +1460,9 @@ class CoachMemoryResponse(BaseModel):
     flags: Dict[str, bool] = {}
     insights: Dict[str, Any] = {}
     
-    # Pour inclure les engrammes dans la réponse de mémoire si besoin, 
-    # mais pour l'instant on les charge via endpoint dédié.
-    
+    # ✅ AJOUT CRITIQUE : La liste des souvenirs
+    engrams: List[CoachEngramResponse] = []
+
     @field_validator('readiness_score', mode='before')
     def extract_readiness(cls, v):
         if isinstance(v, dict):
@@ -1457,6 +1471,25 @@ class CoachMemoryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class CoachMemoryOut(BaseModel):
+    id: int
+    athlete_profile_id: int
+    current_context: Optional[Dict[str, Any]] = None
+    memory_flags: Optional[Dict[str, Any]] = None
+    
+    class Config:
+        from_attributes = True
+
+class CoachMemoryCreate(BaseModel):
+    type: str
+    impact: str = "INFO"
+    status: str = "ACTIVE"
+    content: str
+    tags: List[str] = []
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    user_id: Optional[int] = None
 
 # --- WORKOUT SCHEMAS ---
 
@@ -1730,7 +1763,6 @@ class CoachMemory(Base):
     athlete_profile_id = Column(Integer, ForeignKey("athlete_profiles.id"), unique=True)
 
     metadata_info = Column(JSON, default={}) 
-    
     current_context = Column(JSON, default={})
     response_patterns = Column(JSON, default={})
     performance_baselines = Column(JSON, default={})
@@ -1745,7 +1777,7 @@ class CoachMemory(Base):
 
     athlete_profile = relationship("AthleteProfile", back_populates="coach_memory")
     
-    # [NOUVEAU] Relation vers les Engrammes
+    # ✅ RÉINTÉGRATION : Relation vers les Engrammes
     engrams = relationship("CoachEngram", back_populates="memory", cascade="all, delete-orphan")
 
 class CoachEngram(Base):
@@ -1767,7 +1799,7 @@ class CoachEngram(Base):
     start_date = Column(DateTime(timezone=True), server_default=func.now())
     end_date = Column(DateTime(timezone=True), nullable=True)
     
-    tags = Column(JSON, default=[]) # Ex: ["genou", "squat", "douleur"]
+    tags = Column(JSON, default=[])
 
     # Relation parente
     memory = relationship("CoachMemory", back_populates="engrams")
@@ -2897,12 +2929,13 @@ async def generate_workout(
 ================================================================================
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload # <--- IMPORTANT : Import nécessaire
 from sqlalchemy import select, desc
 
-# --- IMPORTS PROJET (Vérifie ces chemins selon ton dossier) ---
-from database import get_db
-import sql_models, schemas
+# Imports Core
+from app.core.database import get_db
+from app.dependencies import get_current_user
+from app.models import sql_models, schemas
 
 router = APIRouter(
     prefix="/api/v1/coach-memories",
@@ -2910,9 +2943,38 @@ router = APIRouter(
 )
 
 # ==============================================================================
-# 📥 GET ALL MEMORIES (Engrams)
+# 🧠 GET MY MEMORY (Route Principale)
 # ==============================================================================
-# ✅ DOUBLE ROUTE : Accepte à la fois la racine ET /engrams pour éviter les 404
+@router.get("/me", response_model=schemas.CoachMemoryResponse)
+async def get_my_coach_memory(
+    current_user: sql_models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Récupère la mémoire du coach pour l'utilisateur connecté.
+    Utilise selectinload pour forcer le chargement des engrammes (Souvenirs).
+    """
+    # 1. Vérifier le profil
+    if not current_user.athlete_profile:
+        raise HTTPException(status_code=404, detail="Profil athlète introuvable.")
+    
+    profile_id = current_user.athlete_profile.id
+
+    # 2. Requête Explicite avec Chargement Eager (Immédiat) des Engrammes
+    # C'est ici que la magie opère : .options(selectinload(...))
+    memory = db.query(sql_models.CoachMemory)\
+        .options(selectinload(sql_models.CoachMemory.engrams))\
+        .filter(sql_models.CoachMemory.athlete_profile_id == profile_id)\
+        .first()
+
+    if not memory:
+        raise HTTPException(status_code=404, detail="Mémoire du coach introuvable.")
+    
+    return memory
+
+# ==============================================================================
+# 📥 GET ALL MEMORIES (Admin / Debug)
+# ==============================================================================
 @router.get("/", response_model=List[schemas.CoachMemoryOut])
 @router.get("/engrams", response_model=List[schemas.CoachMemoryOut]) 
 async def get_memories(
@@ -2920,24 +2982,13 @@ async def get_memories(
     limit: int = 50,
     status: Optional[str] = None
 ):
-    """
-    Récupère la liste des souvenirs du Coach (Engrams).
-    Filtre optionnel par statut (ACTIVE, ARCHIVED, FORGOTTEN).
-    Trie par date de création descendante (plus récent en premier).
-    """
     query = select(sql_models.CoachMemory)
-    
     if status:
         query = query.where(sql_models.CoachMemory.status == status)
-    
-    # Tri par défaut : les plus récents d'abord
-    query = query.order_by(desc(sql_models.CoachMemory.created_at))
+    query = query.order_by(desc(sql_models.CoachMemory.last_updated))
     query = query.limit(limit)
-
     result = db.execute(query)
-    memories = result.scalars().all()
-    
-    return memories
+    return result.scalars().all()
 
 # ==============================================================================
 # 📤 POST NEW MEMORY
@@ -2947,31 +2998,18 @@ async def create_memory(
     memory_in: schemas.CoachMemoryCreate,
     db: Session = Depends(get_db)
 ):
-    """
-    Crée un nouvel Engramme dans le Cortex (Mémoire long terme).
-    """
+    uid = memory_in.user_id if memory_in.user_id else 1
+    
+    # Création simplifiée pour éviter les crashs si métadonnées incomplètes
     new_memory = sql_models.CoachMemory(
-        user_id=memory_in.user_id if hasattr(memory_in, 'user_id') else 1, # Fallback ID si non fourni
-        type=memory_in.type,
-        impact=memory_in.impact,
-        status=memory_in.status,
-        content=memory_in.content,
-        tags=memory_in.tags,
-        start_date=memory_in.start_date,
-        end_date=memory_in.end_date
+        athlete_profile_id=uid,
+        metadata_info={"type": memory_in.type, "content": memory_in.content}
     )
     
     db.add(new_memory)
-    try:
-        db.commit()
-        db.refresh(new_memory)
-        return new_memory
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=f"Erreur lors de la sauvegarde du souvenir: {str(e)}"
-        )
+    db.commit()
+    db.refresh(new_memory)
+    return new_memory
 
 # ==============================================================================
 # 🗑️ DELETE MEMORY

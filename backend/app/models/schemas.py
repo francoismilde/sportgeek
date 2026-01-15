@@ -209,16 +209,12 @@ class AthleteProfileBase(BaseModel):
         """Nettoie et valide les données de performance."""
         if v is None:
             return {}
-        
         try:
-            # Si c'est déjà un dict, le nettoyer
             if isinstance(v, dict):
-                # Supprimer les valeurs None et chaînes vides (sauf les résultats formatés)
                 cleaned = {}
                 for key, value in v.items():
                     if value in [None, "", "null", "undefined"]:
                         continue
-                    # Pour les résultats formatés, garder même les chaînes vides
                     if key in ['run_vma_est', 'cycling_ftp_est', 'swim_css_est'] and value == "":
                         continue
                     cleaned[key] = value
@@ -240,7 +236,7 @@ class AthleteProfileResponse(AthleteProfileBase):
     class Config:
         from_attributes = True
 
-# --- ENGRAM SCHEMAS (NOUVEAU) ---
+# --- ENGRAM SCHEMAS (✅ CORRIGÉ ET COMPLÉTÉ) ---
 
 class CoachEngramBase(BaseModel):
     type: MemoryType
@@ -248,37 +244,34 @@ class CoachEngramBase(BaseModel):
     status: MemoryStatus = MemoryStatus.ACTIVE
     content: str
     tags: List[str] = []
-    start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
 
 class CoachEngramCreate(CoachEngramBase):
     pass
 
+class CoachEngramUpdate(BaseModel):
+    """
+    Schema pour la mise à jour (PUT) d'un souvenir.
+    Tous les champs sont optionnels.
+    """
+    content: Optional[str] = None
+    type: Optional[MemoryType] = None
+    impact: Optional[ImpactLevel] = None
+    status: Optional[MemoryStatus] = None
+    tags: Optional[List[str]] = None
+    end_date: Optional[datetime] = None
+
 class CoachEngramResponse(CoachEngramBase):
     id: int
     memory_id: int
     author: str
-    created_at: Optional[datetime] = None # Mappé depuis start_date souvent
+    created_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
 
 # --- MEMORY SCHEMAS ---
 
-# 1️⃣ D'abord, on définit à quoi ressemble un souvenir pour l'API
-class CoachEngramResponse(BaseModel):
-    id: int
-    type: str  # Ex: INJURY_REPORT, LIFE_CONSTRAINT
-    impact: str = "INFO"
-    status: str = "ACTIVE"
-    content: str
-    tags: List[str] = []
-    created_at: Optional[datetime] = None
-    
-    class Config:
-        from_attributes = True
-
-# 2️⃣ Ensuite, on l'ajoute dans la réponse de la mémoire
 class CoachMemoryResponse(BaseModel):
     id: int
     readiness_score: int = Field(alias="current_context", default=50)
@@ -286,7 +279,7 @@ class CoachMemoryResponse(BaseModel):
     flags: Dict[str, bool] = {}
     insights: Dict[str, Any] = {}
     
-    # ✅ AJOUT CRITIQUE : La liste des souvenirs
+    # ✅ Liste des souvenirs (Engrammes)
     engrams: List[CoachEngramResponse] = []
 
     @field_validator('readiness_score', mode='before')
