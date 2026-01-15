@@ -1,10 +1,11 @@
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from typing import List, Optional, Dict, Any, Union
 from datetime import date, datetime
 from enum import Enum
 import json
 import re
 import logging
+from app.models.enums import MemoryType, ImpactLevel, MemoryStatus
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,29 @@ class AthleteProfileResponse(AthleteProfileBase):
     class Config:
         from_attributes = True
 
+# --- ENGRAM SCHEMAS (NOUVEAU) ---
+
+class CoachEngramBase(BaseModel):
+    type: MemoryType
+    impact: ImpactLevel = ImpactLevel.INFO
+    status: MemoryStatus = MemoryStatus.ACTIVE
+    content: str
+    tags: List[str] = []
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+class CoachEngramCreate(CoachEngramBase):
+    pass
+
+class CoachEngramResponse(CoachEngramBase):
+    id: int
+    memory_id: int
+    author: str
+    created_at: Optional[datetime] = None # Mappé depuis start_date souvent
+    
+    class Config:
+        from_attributes = True
+
 # --- MEMORY SCHEMAS ---
 
 class CoachMemoryResponse(BaseModel):
@@ -247,6 +271,9 @@ class CoachMemoryResponse(BaseModel):
     current_phase: str = "Général"
     flags: Dict[str, bool] = {}
     insights: Dict[str, Any] = {}
+    
+    # Pour inclure les engrammes dans la réponse de mémoire si besoin, 
+    # mais pour l'instant on les charge via endpoint dédié.
     
     @field_validator('readiness_score', mode='before')
     def extract_readiness(cls, v):

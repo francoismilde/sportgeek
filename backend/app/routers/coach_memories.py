@@ -3,13 +3,14 @@ Routeur pour la gestion de la mémoire du coach
 """
 import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from typing import Dict, Any, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.models import sql_models, schemas
+from app.models.enums import MemoryStatus
 from app.services.coach_memory.service import (
     initialize_coach_memory,
     process_workout_session,
@@ -461,3 +462,86 @@ async def get_recommendations(
             "macrocycle_phase": context.get('macrocycle_phase', 'base')
         }
     }
+
+# --- NOUVEAUX ENDPOINTS POUR LES ENGRAMMES ---
+
+@router.get("/{memory_id}/engrams", response_model=List[schemas.CoachEngramResponse])
+async def get_engrams(
+    memory_id: int,
+    status_filter: Optional[MemoryStatus] = MemoryStatus.ACTIVE,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Récupère les engrammes (souvenirs structurés) de la mémoire.
+    """
+    # 1. Vérification d'accès (Sécurité)
+    coach_memory = db.query(sql_models.CoachMemory).filter(
+        sql_models.CoachMemory.id == memory_id
+    ).first()
+    
+    if not coach_memory:
+        raise HTTPException(status_code=404, detail="Mémoire introuvable")
+        
+    athlete_profile = db.query(sql_models.AthleteProfile).filter(
+        sql_models.AthleteProfile.id == coach_memory.athlete_profile_id,
+        sql_models.AthleteProfile.user_id == current_user.id
+    ).first()
+    
+    if not athlete_profile:
+        raise HTTPException(status_code=403, detail="Accès interdit à cette mémoire")
+
+    # 2. Requête filtrée
+    query = db.query(sql_models.CoachEngram).filter(
+        sql_models.CoachEngram.memory_id == memory_id
+    )
+    
+    if status_filter:
+        query = query.filter(sql_models.CoachEngram.status == status_filter)
+        
+    return query.all()
+
+@router.post("/{memory_id}/engrams", response_model=schemas.CoachEngramResponse)
+async def create_engram(
+    memory_id: int,
+    engram_data: schemas.CoachEngramCreate,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Crée un nouvel engramme dans la mémoire.
+    """
+    # 1. Vérification d'accès
+    coach_memory = db.query(sql_models.CoachMemory).filter(
+        sql_models.CoachMemory.id == memory_id
+    ).first()
+    
+    if not coach_memory:
+        raise HTTPException(status_code=404, detail="Mémoire introuvable")
+        
+    athlete_profile = db.query(sql_models.AthleteProfile).filter(
+        sql_models.AthleteProfile.id == coach_memory.athlete_profile_id,
+        sql_models.AthleteProfile.user_id == current_user.id
+    ).first()
+    
+    if not athlete_profile:
+        raise HTTPException(status_code=403, detail="Accès interdit")
+
+    # 2. Création de l'objet SQL
+    new_engram = sql_models.CoachEngram(
+        memory_id=memory_id,
+        author="USER", # Ou "COACH_AI" si généré automatiquement plus tard
+        type=engram_data.type,
+        impact=engram_data.impact,
+        status=engram_data.status,
+        content=engram_data.content,
+        tags=engram_data.tags,
+        start_date=engram_data.start_date or datetime.now(),
+        end_date=engram_data.end_date
+    )
+    
+    db.add(new_engram)
+    db.commit()
+    db.refresh(new_engram)
+    
+    return new_engram

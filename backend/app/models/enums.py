@@ -38,3 +38,25 @@ class EnergyLevel(IntEnum):
     HIGH_FOCUS = 3    # Performance maximale
     MEDIUM = 2        # Entraînement standard / Développement
     LOW_RECOVERY = 1  # Récupération active / Technique légère
+
+# --- NOUVEAUX ENUMS (ENGRAMMES) ---
+
+class MemoryType(str, Enum):
+    """Type de souvenir structurel."""
+    INJURY_REPORT = "INJURY_REPORT"         # Blessure signalée
+    LIFE_CONSTRAINT = "LIFE_CONSTRAINT"     # Contrainte vie (voyage, examen...)
+    STRATEGIC_OVERRIDE = "STRATEGIC_OVERRIDE" # Changement de cap manuel
+    BIOFEEDBACK_LOG = "BIOFEEDBACK_LOG"     # Retour sensation spécifique
+
+class ImpactLevel(str, Enum):
+    """Impact du souvenir sur la génération du plan."""
+    INFO = "INFO"           # À titre informatif
+    MODERATE = "MODERATE"   # Nécessite un ajustement mineur
+    SEVERE = "SEVERE"       # Bloque ou modifie drastiquement le plan
+
+class MemoryStatus(str, Enum):
+    """Cycle de vie du souvenir."""
+    ACTIVE = "ACTIVE"       # En cours, pris en compte
+    SCHEDULED = "SCHEDULED" # Futur (ex: vacances prévues)
+    RESOLVED = "RESOLVED"   # Terminé, mais gardé en historique
+    ARCHIVED = "ARCHIVED"   # Supprimé logiquement

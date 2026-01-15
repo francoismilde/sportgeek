@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, DateTime, Text, Boolean, JSON
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, DateTime, Text, Boolean, JSON, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
+from app.models.enums import MemoryType, ImpactLevel, MemoryStatus
 
 class User(Base):
     __tablename__ = "users"
@@ -42,7 +43,6 @@ class AthleteProfile(Base):
     user = relationship("User", back_populates="athlete_profile")
     coach_memory = relationship("CoachMemory", back_populates="athlete_profile", uselist=False, cascade="all, delete-orphan")
 
-    # Méthode pour calculer le pourcentage de complétion (optionnel)
     @property
     def completion_percentage(self):
         sections = [
@@ -50,10 +50,8 @@ class AthleteProfile(Base):
             self.performance_baseline, self.injury_prevention,
             self.training_preferences, self.goals, self.constraints
         ]
-        
         filled = sum(1 for section in sections if section and section != {})
         total = len(sections)
-        
         return int((filled / total) * 100) if total > 0 else 0
 
     @property
@@ -81,6 +79,33 @@ class CoachMemory(Base):
     last_updated = Column(DateTime(timezone=True), server_default=func.now())
 
     athlete_profile = relationship("AthleteProfile", back_populates="coach_memory")
+    
+    # [NOUVEAU] Relation vers les Engrammes
+    engrams = relationship("CoachEngram", back_populates="memory", cascade="all, delete-orphan")
+
+class CoachEngram(Base):
+    """
+    Unité de mémoire structurée (Souvenir/Règle) pour le Coach IA.
+    """
+    __tablename__ = "coach_engrams"
+
+    id = Column(Integer, primary_key=True, index=True)
+    memory_id = Column(Integer, ForeignKey("coach_memories.id"), nullable=False)
+    
+    author = Column(String, default="COACH_AI")
+    type = Column(SQLEnum(MemoryType), nullable=False)
+    impact = Column(SQLEnum(ImpactLevel), nullable=False, default=ImpactLevel.INFO)
+    status = Column(SQLEnum(MemoryStatus), nullable=False, default=MemoryStatus.ACTIVE)
+    
+    content = Column(Text, nullable=False)
+    
+    start_date = Column(DateTime(timezone=True), server_default=func.now())
+    end_date = Column(DateTime(timezone=True), nullable=True)
+    
+    tags = Column(JSON, default=[]) # Ex: ["genou", "squat", "douleur"]
+
+    # Relation parente
+    memory = relationship("CoachMemory", back_populates="engrams")
 
 class WorkoutSession(Base):
     __tablename__ = "workout_sessions"
@@ -90,7 +115,7 @@ class WorkoutSession(Base):
     duration = Column(Float)
     rpe = Column(Float)
     energy_level = Column(Integer, default=5) 
-    notes = Column(Text, nullable=True)      
+    notes = Column(Text, nullable=True)       
     ai_analysis = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     owner = relationship("User", back_populates="workouts")

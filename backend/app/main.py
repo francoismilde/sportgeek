@@ -5,6 +5,10 @@ import logging
 from sqlalchemy import text, inspect, create_engine
 from datetime import datetime
 
+from app.core.database import engine, Base
+# Import des modèles
+from app.models import sql_models 
+
 # --- IMPORTS DES ROUTEURS ---
 from .routers import (
     performance, 
@@ -14,11 +18,9 @@ from .routers import (
     coach, 
     user, 
     feed,
-    athlete_profiles  # ✅ Uniquement le nouveau routeur unifié
+    athlete_profiles,
+    coach_memories  # ✅ NOUVEL IMPORT CRITIQUE (DEV-CARD #01)
 )
-from app.core.database import engine, Base
-# Import des modèles
-from app.models import sql_models 
 
 # Configuration des logs
 logging.basicConfig(level=logging.INFO)
@@ -34,7 +36,7 @@ except Exception as e:
 app = FastAPI(
     title="TitanFlow API",
     description="API Backend pour l'application TitanFlow",
-    version="2.4.1", 
+    version="2.5.0", # Bump version pour marquer le changement
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -61,16 +63,19 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # --- ROUTEURS ACTIFS ---
 
-# 1. Auth (inchangé)
+# 1. Auth
 app.include_router(auth.router)
 
-# 2. PROFILES - UNIQUE ROUTEUR UNIFIÉ
-# Supprimez l'inclusion de l'ancien routeur profiles.router
+# 2. PROFILES & MEMORY
 app.include_router(
     athlete_profiles.router, 
-    prefix="/api/v1/profiles",  # ✅ Préfixe unique pour toutes les routes
+    prefix="/api/v1/profiles", 
     tags=["Profiles"]
 )
+
+# ✅ AJOUT DU ROUTEUR MÉMOIRE (DEV-CARD #02)
+# Les préfixes sont déjà définis dans le routeur lui-même (/api/v1/coach-memories)
+app.include_router(coach_memories.router)
 
 # 3. Autres features
 app.include_router(workouts.router)
@@ -85,7 +90,7 @@ app.include_router(feed.router)
 async def health_check():
     return {
         "status": "active",
-        "version": "2.4.1",
+        "version": "2.5.0",
         "database": "connected"
     }
 
@@ -104,70 +109,11 @@ async def database_status():
             "status": "success",
             "tables": tables,
             "json_profile_ready": 'profile_data' in columns_user,
+            "engrams_ready": 'coach_engrams' in tables, # ✅ Check Engrams
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-@app.get("/system/migrate", tags=["System"])
-async def run_surgical_migration():
-    """
-    🚑 MIGRATION CHIRURGICALE (Via API)
-    """
-    try:
-        logs = []
-        with engine.connect() as conn:
-            trans = conn.begin()
-            try:
-                inspector = inspect(engine)
-                existing_tables = inspector.get_table_names()
-                
-                # 1. Users & JSON
-                if 'users' in existing_tables:
-                    cols = [c['name'] for c in inspector.get_columns('users')]
-                    if 'profile_data' not in cols:
-                        is_postgres = "postgres" in str(engine.url)
-                        col_type = "JSONB" if is_postgres else "JSON"
-                        if not is_postgres: col_type = "TEXT" 
-
-                        conn.execute(text(f"ALTER TABLE users ADD COLUMN profile_data {col_type} DEFAULT '{{}}'"))
-                        logs.append(f"✅ Colonne profile_data ({col_type}) ajoutée.")
-                    else:
-                        logs.append("ℹ️ Colonne profile_data déjà présente.")
-                
-                # 2. Nettoyage
-                for old_table in ['coach_memories', 'athlete_profiles']:
-                    if old_table in existing_tables:
-                        conn.execute(text(f"DROP TABLE {old_table} CASCADE"))
-                        logs.append(f"🗑️ Table {old_table} supprimée.")
-                
-                # 3. Feed Items
-                if 'feed_items' not in existing_tables:
-                    conn.execute(text("""
-                        CREATE TABLE feed_items (
-                            id VARCHAR PRIMARY KEY,
-                            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                            type VARCHAR NOT NULL,
-                            title VARCHAR NOT NULL,
-                            message VARCHAR NOT NULL,
-                            action_payload TEXT,
-                            is_read BOOLEAN DEFAULT FALSE,
-                            is_completed BOOLEAN DEFAULT FALSE,
-                            priority INTEGER DEFAULT 1,
-                            created_at TIMESTAMPTZ DEFAULT NOW()
-                        );
-                    """))
-                    logs.append("✅ Table feed_items créée.")
-                
-                trans.commit()
-                return {"status": "SUCCESS", "logs": logs}
-                
-            except Exception as inner_e:
-                trans.rollback()
-                raise inner_e
-                
-    except Exception as e:
-        return {"status": "ERROR", "detail": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
