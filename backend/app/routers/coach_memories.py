@@ -27,13 +27,13 @@ async def get_my_coach_memory(
     Récupère la mémoire du coach pour l'utilisateur connecté.
     FILTRE : Ne renvoie PAS les souvenirs archivés.
     """
-    # 1. Vérifier le profil
+    # [cite_start]1. Vérifier le profil [cite: 269]
     if not current_user.athlete_profile:
         raise HTTPException(status_code=404, detail="Profil athlète introuvable.")
     
     profile_id = current_user.athlete_profile.id
 
-    # 2. Requête Explicite avec Chargement Eager (Immédiat) des Engrammes
+    # [cite_start]2. Requête Explicite avec Chargement Eager (Immédiat) des Engrammes [cite: 270]
     memory = db.query(sql_models.CoachMemory)\
         .options(selectinload(sql_models.CoachMemory.engrams))\
         .filter(sql_models.CoachMemory.athlete_profile_id == profile_id)\
@@ -42,7 +42,7 @@ async def get_my_coach_memory(
     if not memory:
         raise HTTPException(status_code=404, detail="Mémoire du coach introuvable.")
     
-    # 3. HYGIÈNE DES DONNÉES : Filtrage Python
+    # [cite_start]3. HYGIÈNE DES DONNÉES : Filtrage Python [cite: 271]
     # On garde ACTIVE et RESOLVED (historique visible), on vire ARCHIVED (poubelle).
     # SQLAlchemy a chargé tous les objets en mémoire, on peut trier la liste avant sérialisation.
     if memory.engrams:
@@ -72,25 +72,52 @@ async def get_memories(
     return result.scalars().all()
 
 # ==============================================================================
-# 📤 POST NEW MEMORY
+# 📤 POST NEW MEMORY (CORRIGÉ & SÉCURISÉ)
 # ==============================================================================
 @router.post("/", response_model=schemas.CoachMemoryOut, status_code=status.HTTP_201_CREATED)
 async def create_memory(
     memory_in: schemas.CoachMemoryCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user) # ✅ Injection de l'user connecté
 ):
-    uid = memory_in.user_id if memory_in.user_id else 1
+    """
+    Crée une nouvelle instance de mémoire Coach.
+    Sécurisé : Utilise l'ID du profil de l'utilisateur connecté.
+    """
+    # 1. Vérification du profil athlète
+    if not current_user.athlete_profile:
+        raise HTTPException(
+            status_code=400, 
+            detail="Impossible de créer une mémoire : aucun profil athlète associé."
+        )
+
+    profile_id = current_user.athlete_profile.id
+
+    # 2. Vérification d'unicité (1 Athlète = 1 Mémoire)
+    existing_memory = db.query(sql_models.CoachMemory).filter(
+        sql_models.CoachMemory.athlete_profile_id == profile_id
+    ).first()
+
+    if existing_memory:
+        raise HTTPException(
+            status_code=409, # Conflict
+            detail="Une mémoire Coach existe déjà pour ce profil."
+        )
     
-    # Création simplifiée pour éviter les crashs si métadonnées incomplètes
+    # 3. Création de la mémoire liée au bon utilisateur
     new_memory = sql_models.CoachMemory(
-        athlete_profile_id=uid,
+        athlete_profile_id=profile_id, # ✅ ID sécurisé
         metadata_info={"type": memory_in.type, "content": memory_in.content}
     )
     
-    db.add(new_memory)
-    db.commit()
-    db.refresh(new_memory)
-    return new_memory
+    try:
+        db.add(new_memory)
+        db.commit()
+        db.refresh(new_memory)
+        return new_memory
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erreur création mémoire: {str(e)}")
 
 # ==============================================================================
 # 🔄 UPDATE ENGRAM (DEV-CARD #04 - Logique Réactivation)
@@ -108,7 +135,7 @@ async def update_engram(
     - RESOLVED : Fige la date de fin.
     - ACTIVE (depuis RESOLVED) : Efface la date de fin (Réactivation).
     """
-    # 1. Fetch & Check de propriété via Jointure (Plus sécure)
+    # [cite_start]1. Fetch & Check de propriété via Jointure (Plus sécure) [cite: 277]
     # On vérifie que l'engramme est lié à une mémoire, elle-même liée au profil du user connecté.
     engram = db.query(sql_models.CoachEngram)\
         .join(sql_models.CoachMemory)\
@@ -121,7 +148,7 @@ async def update_engram(
     if not engram:
         raise HTTPException(status_code=404, detail="Engramme introuvable ou accès refusé.")
 
-    # 2. LOGIQUE TEMPORELLE (Le Chronomètre)
+    # [cite_start]2. LOGIQUE TEMPORELLE (Le Chronomètre) [cite: 278]
     # Cas : Résolution -> On date la fin
     if engram_update.status == MemoryStatus.RESOLVED:
         # On ne met à jour la date que si elle n'est pas déjà fixée
@@ -132,7 +159,7 @@ async def update_engram(
     elif engram_update.status == MemoryStatus.ACTIVE:
         engram.end_date = None
 
-    # 3. Application des mises à jour
+    # [cite_start]3. Application des mises à jour [cite: 279]
     # On met à jour manuellement pour contrôler ce qui change
     engram.content = engram_update.content
     engram.type = engram_update.type
