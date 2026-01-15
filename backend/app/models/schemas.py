@@ -265,6 +265,20 @@ class CoachEngramResponse(CoachEngramBase):
 
 # --- MEMORY SCHEMAS ---
 
+# 1️⃣ D'abord, on définit à quoi ressemble un souvenir pour l'API
+class CoachEngramResponse(BaseModel):
+    id: int
+    type: str  # Ex: INJURY_REPORT, LIFE_CONSTRAINT
+    impact: str = "INFO"
+    status: str = "ACTIVE"
+    content: str
+    tags: List[str] = []
+    created_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+# 2️⃣ Ensuite, on l'ajoute dans la réponse de la mémoire
 class CoachMemoryResponse(BaseModel):
     id: int
     readiness_score: int = Field(alias="current_context", default=50)
@@ -272,8 +286,9 @@ class CoachMemoryResponse(BaseModel):
     flags: Dict[str, bool] = {}
     insights: Dict[str, Any] = {}
     
-    # Pour inclure les engrammes dans la réponse de mémoire si besoin, 
-    # mais pour l'instant on les charge via endpoint dédié.
+    # ✅ AJOUT CRITIQUE : La liste des souvenirs
+    engrams: List[CoachEngramResponse] = []
+
     @field_validator('readiness_score', mode='before')
     def extract_readiness(cls, v):
         if isinstance(v, dict):
@@ -282,6 +297,25 @@ class CoachMemoryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class CoachMemoryOut(BaseModel):
+    id: int
+    athlete_profile_id: int
+    current_context: Optional[Dict[str, Any]] = None
+    memory_flags: Optional[Dict[str, Any]] = None
+    
+    class Config:
+        from_attributes = True
+
+class CoachMemoryCreate(BaseModel):
+    type: str
+    impact: str = "INFO"
+    status: str = "ACTIVE"
+    content: str
+    tags: List[str] = []
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    user_id: Optional[int] = None
 
 # --- WORKOUT SCHEMAS ---
 
@@ -483,23 +517,3 @@ class GoalProgressUpdate(BaseModel):
 
 class AthleteProfileUpdate(AthleteProfileBase):
     pass
-
-# --- AJOUTS POUR COACH MEMORY ROUTER (FIX 404/500) ---
-class CoachMemoryOut(BaseModel):
-    id: int
-    athlete_profile_id: int
-    current_context: Optional[Dict[str, Any]] = None
-    memory_flags: Optional[Dict[str, Any]] = None
-    
-    class Config:
-        from_attributes = True
-
-class CoachMemoryCreate(BaseModel):
-    type: str
-    impact: str = "INFO"
-    status: str = "ACTIVE"
-    content: str
-    tags: List[str] = []
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
-    user_id: Optional[int] = None
