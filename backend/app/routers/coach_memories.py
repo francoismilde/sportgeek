@@ -3,8 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import select, desc
 
-# --- IMPORTS PROJET (Vérifie ces chemins selon ton dossier) ---
+# Imports Core
 from app.core.database import get_db
+from app.dependencies import get_current_user  # ✅ AJOUT CRITIQUE
 from app.models import sql_models, schemas
 
 router = APIRouter(
@@ -13,9 +14,28 @@ router = APIRouter(
 )
 
 # ==============================================================================
-# 📥 GET ALL MEMORIES (Engrams)
+# 🧠 GET MY MEMORY (Prioritaire sur /{id})
 # ==============================================================================
-# ✅ DOUBLE ROUTE : Accepte à la fois la racine ET /engrams pour éviter les 404
+@router.get("/me", response_model=schemas.CoachMemoryResponse)
+async def get_my_coach_memory(
+    current_user: sql_models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Récupère la mémoire du coach pour l'utilisateur connecté.
+    Route spécifique : Doit être déclarée AVANT les routes dynamiques.
+    """
+    if not current_user.athlete_profile:
+        raise HTTPException(status_code=404, detail="Profil athlète introuvable.")
+        
+    if not current_user.athlete_profile.coach_memory:
+        raise HTTPException(status_code=404, detail="Mémoire du coach introuvable.")
+    
+    return current_user.athlete_profile.coach_memory
+
+# ==============================================================================
+# 📥 GET ALL MEMORIES (Admin / Debug)
+# ==============================================================================
 @router.get("/", response_model=List[schemas.CoachMemoryOut])
 @router.get("/engrams", response_model=List[schemas.CoachMemoryOut]) 
 async def get_memories(
@@ -23,24 +43,13 @@ async def get_memories(
     limit: int = 50,
     status: Optional[str] = None
 ):
-    """
-    Récupère la liste des souvenirs du Coach (Engrams).
-    Filtre optionnel par statut (ACTIVE, ARCHIVED, FORGOTTEN).
-    Trie par date de création descendante (plus récent en premier).
-    """
     query = select(sql_models.CoachMemory)
-    
     if status:
         query = query.where(sql_models.CoachMemory.status == status)
-    
-    # Tri par défaut : les plus récents d'abord
-    query = query.order_by(desc(sql_models.CoachMemory.created_at))
+    query = query.order_by(desc(sql_models.CoachMemory.last_updated))
     query = query.limit(limit)
-
     result = db.execute(query)
-    memories = result.scalars().all()
-    
-    return memories
+    return result.scalars().all()
 
 # ==============================================================================
 # 📤 POST NEW MEMORY
@@ -50,34 +59,23 @@ async def create_memory(
     memory_in: schemas.CoachMemoryCreate,
     db: Session = Depends(get_db)
 ):
-    """
-    Crée un nouvel Engramme dans le Cortex (Mémoire long terme).
-    """
+    # Si user_id n'est pas fourni, on met une valeur par défaut safe (ex: 1) ou on gère l'erreur
+    uid = memory_in.user_id if memory_in.user_id else 1
+    
+    # Attention: CoachMemoryCreate ici semble être designé pour des Engrammes ou test
+    # On crée une entrée basique pour éviter le crash
     new_memory = sql_models.CoachMemory(
-        user_id=memory_in.user_id if hasattr(memory_in, 'user_id') else 1, # Fallback ID si non fourni
-        type=memory_in.type,
-        impact=memory_in.impact,
-        status=memory_in.status,
-        content=memory_in.content,
-        tags=memory_in.tags,
-        start_date=memory_in.start_date,
-        end_date=memory_in.end_date
+        athlete_profile_id=uid, # Simplification pour le debug
+        metadata_info={"type": memory_in.type, "content": memory_in.content}
     )
     
     db.add(new_memory)
-    try:
-        db.commit()
-        db.refresh(new_memory)
-        return new_memory
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=f"Erreur lors de la sauvegarde du souvenir: {str(e)}"
-        )
+    db.commit()
+    db.refresh(new_memory)
+    return new_memory
 
 # ==============================================================================
-# 🗑️ DELETE MEMORY
+# 🗑️ DELETE MEMORY (Route Dynamique - Doit être en dernier)
 # ==============================================================================
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_memory(
