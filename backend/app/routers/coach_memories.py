@@ -1,11 +1,11 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload # <--- IMPORTANT : Import nécessaire
 from sqlalchemy import select, desc
 
 # Imports Core
 from app.core.database import get_db
-from app.dependencies import get_current_user  # ✅ AJOUT CRITIQUE
+from app.dependencies import get_current_user
 from app.models import sql_models, schemas
 
 router = APIRouter(
@@ -14,7 +14,7 @@ router = APIRouter(
 )
 
 # ==============================================================================
-# 🧠 GET MY MEMORY (Prioritaire sur /{id})
+# 🧠 GET MY MEMORY (Route Principale)
 # ==============================================================================
 @router.get("/me", response_model=schemas.CoachMemoryResponse)
 async def get_my_coach_memory(
@@ -23,15 +23,25 @@ async def get_my_coach_memory(
 ):
     """
     Récupère la mémoire du coach pour l'utilisateur connecté.
-    Route spécifique : Doit être déclarée AVANT les routes dynamiques.
+    Utilise selectinload pour forcer le chargement des engrammes (Souvenirs).
     """
+    # 1. Vérifier le profil
     if not current_user.athlete_profile:
         raise HTTPException(status_code=404, detail="Profil athlète introuvable.")
-        
-    if not current_user.athlete_profile.coach_memory:
+    
+    profile_id = current_user.athlete_profile.id
+
+    # 2. Requête Explicite avec Chargement Eager (Immédiat) des Engrammes
+    # C'est ici que la magie opère : .options(selectinload(...))
+    memory = db.query(sql_models.CoachMemory)\
+        .options(selectinload(sql_models.CoachMemory.engrams))\
+        .filter(sql_models.CoachMemory.athlete_profile_id == profile_id)\
+        .first()
+
+    if not memory:
         raise HTTPException(status_code=404, detail="Mémoire du coach introuvable.")
     
-    return current_user.athlete_profile.coach_memory
+    return memory
 
 # ==============================================================================
 # 📥 GET ALL MEMORIES (Admin / Debug)
@@ -59,13 +69,11 @@ async def create_memory(
     memory_in: schemas.CoachMemoryCreate,
     db: Session = Depends(get_db)
 ):
-    # Si user_id n'est pas fourni, on met une valeur par défaut safe (ex: 1) ou on gère l'erreur
     uid = memory_in.user_id if memory_in.user_id else 1
     
-    # Attention: CoachMemoryCreate ici semble être designé pour des Engrammes ou test
-    # On crée une entrée basique pour éviter le crash
+    # Création simplifiée pour éviter les crashs si métadonnées incomplètes
     new_memory = sql_models.CoachMemory(
-        athlete_profile_id=uid, # Simplification pour le debug
+        athlete_profile_id=uid,
         metadata_info={"type": memory_in.type, "content": memory_in.content}
     )
     
@@ -75,7 +83,7 @@ async def create_memory(
     return new_memory
 
 # ==============================================================================
-# 🗑️ DELETE MEMORY (Route Dynamique - Doit être en dernier)
+# 🗑️ DELETE MEMORY
 # ==============================================================================
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_memory(
