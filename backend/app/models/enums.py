@@ -39,7 +39,7 @@ class EnergyLevel(IntEnum):
     MEDIUM = 2        # Entraînement standard / Développement
     LOW_RECOVERY = 1  # Récupération active / Technique légère
 
-# --- NOUVEAUX ENUMS (ENGRAMMES) ---
+# --- MEMORY ENUMS ---
 
 class MemoryType(str, Enum):
     """Type de souvenir structurel."""
@@ -60,3 +60,52 @@ class MemoryStatus(str, Enum):
     SCHEDULED = "SCHEDULED" # Futur (ex: vacances prévues)
     RESOLVED = "RESOLVED"   # Terminé, mais gardé en historique
     ARCHIVED = "ARCHIVED"   # Supprimé logiquement
+
+# --- NEW ENUMS (MIGRATED FROM SCHEMAS) ---
+
+class SportType(str, Enum):
+    RUGBY = "Rugby"
+    FOOTBALL = "Football"
+    CROSSFIT = "CrossFit"
+    HYBRID = "Hybrid"
+    RUNNING = "Running"
+    OTHER = "Autre"
+    BODYBUILDING = "BODYBUILDING"
+    CYCLING = "CYCLING"
+    TRIATHLON = "TRIATHLON"
+    POWERLIFTING = "POWERLIFTING"
+    SWIMMING = "SWIMMING"
+    COMBAT_SPORTS = "COMBAT_SPORTS"
+
+class EquipmentType(str, Enum):
+    PERFORMANCE_LAB = "PERFORMANCE_LAB"
+    COMMERCIAL_GYM = "COMMERCIAL_GYM"
+    HOME_GYM_BARBELL = "HOME_GYM_BARBELL"
+    HOME_GYM_DUMBBELL = "HOME_GYM_DUMBBELL"
+    CALISTHENICS_KIT = "CALISTHENICS_KIT"
+    BODYWEIGHT_ZERO = "BODYWEIGHT_ZERO"
+    ENDURANCE_SUITE = "ENDURANCE_SUITE"
+    STANDARD = "Standard"
+    HOME_GYM_FULL = "HOME_GYM_FULL"
+    CROSSFIT_BOX = "CROSSFIT_BOX"
+    DUMBBELLS = "DUMBBELLS"
+    BARBELL = "BARBELL"
+    KETTLEBELLS = "KETTLEBELLS"
+    PULL_UP_BAR = "PULL_UP_BAR"
+    BENCH = "BENCH"
+    DIP_STATION = "DIP_STATION"
+    BANDS = "BANDS"
+    RINGS_TRX = "RINGS_TRX"
+    JUMP_ROPE = "JUMP_ROPE"
+    WEIGHT_VEST = "WEIGHT_VEST"
+    BIKE = "BIKE"
+    HOME_TRAINER = "HOME_TRAINER"
+    ROWER = "ROWER"
+    TREADMILL = "TREADMILL"
+    POOL = "POOL"
+
+class FeedItemType(str, Enum):
+    INFO = "INFO"
+    ANALYSIS = "ANALYSIS"
+    ACTION = "ACTION"
+    ALERT = "ALERT"

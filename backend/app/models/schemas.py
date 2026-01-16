@@ -5,52 +5,14 @@ from enum import Enum
 import json
 import re
 import logging
-from app.models.enums import MemoryType, ImpactLevel, MemoryStatus
+
+# ✅ IMPORT CENTRALISÉ (On récupère tout depuis enums.py)
+from app.models.enums import (
+    MemoryType, ImpactLevel, MemoryStatus, 
+    SportType, EquipmentType, FeedItemType
+)
 
 logger = logging.getLogger(__name__)
-
-# --- ENUMS & TYPES ---
-
-class SportType(str, Enum):
-    RUGBY = "Rugby"
-    FOOTBALL = "Football"
-    CROSSFIT = "CrossFit"
-    HYBRID = "Hybrid"
-    RUNNING = "Running"
-    OTHER = "Autre"
-    BODYBUILDING = "BODYBUILDING"
-    CYCLING = "CYCLING"
-    TRIATHLON = "TRIATHLON"
-    POWERLIFTING = "POWERLIFTING"
-    SWIMMING = "SWIMMING"
-    COMBAT_SPORTS = "COMBAT_SPORTS"
-
-class EquipmentType(str, Enum):
-    PERFORMANCE_LAB = "PERFORMANCE_LAB"
-    COMMERCIAL_GYM = "COMMERCIAL_GYM"
-    HOME_GYM_BARBELL = "HOME_GYM_BARBELL"
-    HOME_GYM_DUMBBELL = "HOME_GYM_DUMBBELL"
-    CALISTHENICS_KIT = "CALISTHENICS_KIT"
-    BODYWEIGHT_ZERO = "BODYWEIGHT_ZERO"
-    ENDURANCE_SUITE = "ENDURANCE_SUITE"
-    STANDARD = "Standard"
-    HOME_GYM_FULL = "HOME_GYM_FULL"
-    CROSSFIT_BOX = "CROSSFIT_BOX"
-    DUMBBELLS = "DUMBBELLS"
-    BARBELL = "BARBELL"
-    KETTLEBELLS = "KETTLEBELLS"
-    PULL_UP_BAR = "PULL_UP_BAR"
-    BENCH = "BENCH"
-    DIP_STATION = "DIP_STATION"
-    BANDS = "BANDS"
-    RINGS_TRX = "RINGS_TRX"
-    JUMP_ROPE = "JUMP_ROPE"
-    WEIGHT_VEST = "WEIGHT_VEST"
-    BIKE = "BIKE"
-    HOME_TRAINER = "HOME_TRAINER"
-    ROWER = "ROWER"
-    TREADMILL = "TREADMILL"
-    POOL = "POOL"
 
 # --- PERFORMANCE METRICS SUB-SCHEMAS ---
 
@@ -236,7 +198,7 @@ class AthleteProfileResponse(AthleteProfileBase):
     class Config:
         from_attributes = True
 
-# --- ENGRAM SCHEMAS (✅ CORRIGÉ ET COMPLÉTÉ) ---
+# --- ENGRAM SCHEMAS ---
 
 class CoachEngramBase(BaseModel):
     type: MemoryType
@@ -279,7 +241,7 @@ class CoachMemoryResponse(BaseModel):
     flags: Dict[str, bool] = {}
     insights: Dict[str, Any] = {}
     
-    # ✅ Liste des souvenirs (Engrammes)
+    # Liste des souvenirs (Engrammes)
     engrams: List[CoachEngramResponse] = []
 
     @field_validator('readiness_score', mode='before')
@@ -431,12 +393,6 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 # --- FEED ---
-
-class FeedItemType(str, Enum):
-    INFO = "INFO"
-    ANALYSIS = "ANALYSIS"
-    ACTION = "ACTION"
-    ALERT = "ALERT"
 
 class FeedItemCreate(BaseModel):
     type: FeedItemType

@@ -45,47 +45,38 @@ print(f"📂 Source Backend : {BACKEND_DIR}")
 print(f"📂 Cible Frontend : {FRONTEND_MODELS_DIR}")
 
 # ==============================================================================
-# 2. IMPORTATION DES MODÈLES (LE COEUR DU RÉACTEUR)
+# 2. IMPORTATION DES MODÈLES ET ENUMS
 # ==============================================================================
 try:
+    # --- SCHEMAS (Classes) ---
     from app.models.schemas import (
-        # Auth & User
-        UserResponse,
-        Token,
-        
-        # Profil & Athlète
+        UserResponse, Token,
         AthleteProfileResponse,
-        
-        # Coach & Mémoire
-        CoachMemoryResponse,
-        CoachEngramResponse,
-        
-        # Workouts & Séances
-        WorkoutSessionResponse,
-        WorkoutSetResponse,
-        
-        # IA & Plans
-        AIWorkoutPlan,
-        AIExercise,
-        WeeklyPlanResponse,
-        StrategyResponse,
-        ProfileAuditResponse,
-        
-        # Feed
+        CoachMemoryResponse, CoachEngramResponse,
+        WorkoutSessionResponse, WorkoutSetResponse,
+        AIWorkoutPlan, AIExercise, WeeklyPlanResponse, StrategyResponse, ProfileAuditResponse,
         FeedItemResponse,
-        
-        # Performance & Safety
-        OneRepMaxResponse,
-        ACWRResponse
+        OneRepMaxResponse, ACWRResponse
     )
-    print("✅ Modèles Pydantic importés avec succès.")
+    
+    # --- ENUMS (Types) ---
+    # Assure-toi que ces Enums existent bien dans app.models.enums
+    from app.models.enums import (
+        MemoryType, 
+        ImpactLevel, 
+        MemoryStatus, 
+        FeedItemType, 
+        # Ajoute ici d'autres enums si nécessaire (ex: SportType, etc.)
+    )
+    
+    print("✅ Modèles et Enums importés avec succès.")
 except ImportError as e:
     print(f"\n❌ ERREUR D'IMPORT PYTHON : {e}")
     print("   Vérifiez que votre environnement virtuel est activé.")
     print("   (source venv/bin/activate)")
     sys.exit(1)
 
-# Liste exhaustive des modèles à convertir
+# Liste des modèles (Classes) à convertir en fichiers individuels
 MODELS_TO_GENERATE = [
     UserResponse,
     Token,
@@ -102,6 +93,14 @@ MODELS_TO_GENERATE = [
     FeedItemResponse,
     OneRepMaxResponse,
     ACWRResponse
+]
+
+# Liste des Enums à regrouper dans enums.dart
+ENUMS_TO_GENERATE = [
+    MemoryType,
+    ImpactLevel,
+    MemoryStatus,
+    FeedItemType
 ]
 
 # ==============================================================================
@@ -127,15 +126,14 @@ def to_camel_case(snake_str):
     return components[0] + ''.join(x.title() for x in components[1:])
 
 def get_dart_filename(class_name):
-    """Nettoie le nom de la classe pour le fichier (ex: UserResponse -> user.dart)"""
+    """Nettoie le nom de la classe pour le fichier"""
     clean_name = class_name.replace("Response", "").replace("Schema", "")
     s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', clean_name)
     return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower() + ".dart"
 
 def generate_dart_code(pydantic_model):
-    """Génère le code source Dart pour un modèle donné"""
+    """Génère le code source Dart pour un modèle Pydantic (Classe)"""
     
-    # Nom de la classe Dart
     raw_name = pydantic_model.__name__
     dart_class_name = raw_name.replace("Response", "").replace("Schema", "")
     
@@ -143,7 +141,6 @@ def generate_dart_code(pydantic_model):
     from_json_logic = []
     to_json_logic = []
     
-    # Introspection du Schéma
     try:
         schema = pydantic_model.model_json_schema() # Pydantic V2
     except AttributeError:
@@ -151,12 +148,15 @@ def generate_dart_code(pydantic_model):
         
     props = schema.get('properties', {})
     
+    # Imports potentiels (si besoin d'enums, etc.)
+    # Pour simplifier, on suppose que les classes complexes sont dans le même dossier
+    # Mais pour les Enums, on doit savoir s'ils sont utilisés.
+    
     for field_name, field_info in props.items():
-        # --- ANALYSE DU TYPE ---
         py_type = field_info.get('type', 'any')
         dart_type = "dynamic"
         
-        # Gestion des références ($ref) vers d'autres objets
+        # Gestion des références ($ref)
         ref_obj = None
         if '$ref' in field_info:
             ref_obj = field_info['$ref'].split('/')[-1]
@@ -168,10 +168,17 @@ def generate_dart_code(pydantic_model):
         
         is_complex = False
         is_list_complex = False
+        is_enum = False
         
         if ref_obj:
-            dart_type = ref_obj.replace("Response", "").replace("Schema", "")
-            is_complex = True
+            # Vérifier si c'est un Enum connu
+            clean_ref = ref_obj.replace("Response", "").replace("Schema", "")
+            if clean_ref in [e.__name__ for e in ENUMS_TO_GENERATE]:
+                dart_type = clean_ref # C'est un Enum !
+                is_enum = True
+            else:
+                dart_type = clean_ref # C'est une autre Classe
+                is_complex = True
         else:
             dart_type = TYPE_MAP.get(py_type, 'dynamic')
             
@@ -181,19 +188,17 @@ def generate_dart_code(pydantic_model):
             if '$ref' in items:
                 inner = items['$ref'].split('/')[-1].replace("Response", "").replace("Schema", "")
                 dart_type = f"List<{inner}>"
-                is_list_complex = True
+                is_list_complex = True # Note: pourrait être une liste d'Enums, à affiner si besoin
             else:
                 inner = TYPE_MAP.get(items.get('type', 'any'), 'dynamic')
                 dart_type = f"List<{inner}>"
 
-        # Gestion Nullable
         is_nullable = False
         if 'anyOf' in field_info:
             for t in field_info['anyOf']:
                 if t.get('type') == 'null':
                     is_nullable = True
         
-        # Variable Dart
         var_name = to_camel_case(field_name)
         final_type = f"{dart_type}{'?' if is_nullable else ''}"
         
@@ -209,6 +214,12 @@ def generate_dart_code(pydantic_model):
         elif 'double' in dart_type:
             val_parse = f"({json_access} as num?)?.toDouble()"
             if not is_nullable: val_parse += " ?? 0.0"
+        elif is_enum:
+            # Parsing d'Enum
+            val_parse = f"{json_access} != null ? {dart_type}.fromJson({json_access}) : null"
+            if not is_nullable: 
+                # Valeur par défaut safe (la dernière ou la première)
+                val_parse += f" ?? {dart_type}.values.first"
         elif is_list_complex:
             inner_type = dart_type.replace("List<", "").replace(">", "").replace("?", "")
             val_parse = f"({json_access} as List?)?.map((e) => {inner_type}.fromJson(e)).toList()"
@@ -218,7 +229,6 @@ def generate_dart_code(pydantic_model):
             val_parse = f"{json_access} != null ? {inner_type}.fromJson({json_access}) : null"
             
         elif not is_nullable:
-            # Valeurs par défaut de sécurité
             if 'int' in dart_type: val_parse += " ?? 0"
             elif 'String' in dart_type: val_parse += " ?? ''"
             elif 'bool' in dart_type: val_parse += " ?? false"
@@ -231,6 +241,8 @@ def generate_dart_code(pydantic_model):
         val_export = var_name
         if 'DateTime' in dart_type:
             val_export = f"{var_name}?.toIso8601String()"
+        elif is_enum:
+            val_export = f"{var_name}?.toJson()"
         elif is_list_complex:
             val_export = f"{var_name}?.map((e) => e.toJson()).toList()"
         elif is_complex:
@@ -238,9 +250,14 @@ def generate_dart_code(pydantic_model):
             
         to_json_logic.append(f"      '{field_name}': {val_export},")
 
-    # --- CODE FINAL ---
+    # Si des enums sont utilisés, on doit importer le fichier d'enums
+    # Pour faire simple, on l'ajoute toujours
+    import_enums = "import 'enums.dart';" 
+
     return f"""// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
 // Timestamp : {datetime.datetime.now().isoformat()}
+
+{import_enums}
 
 class {dart_class_name} {{
 {chr(10).join(properties)}
@@ -263,6 +280,39 @@ class {dart_class_name} {{
 }}
 """
 
+def generate_enums_file(enums_list, output_path):
+    """Génère le fichier unique enums.dart pour tous les Enums"""
+    
+    content = f"// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER\n"
+    content += f"// Timestamp : {datetime.datetime.now().isoformat()}\n\n"
+    content += "// Ce fichier regroupe tous les Enums utilisés par les modèles\n\n"
+    
+    for enum_class in enums_list:
+        class_name = enum_class.__name__
+        values = [e.name for e in enum_class]
+        
+        # Valeur par défaut (Fallback)
+        default_val = values[-1] if "OTHER" in values else values[0]
+        
+        content += f"enum {class_name} {{\n"
+        content += "  " + ",\n  ".join(values) + ";\n\n"
+        
+        content += "  String toJson() => name;\n\n"
+        
+        content += f"  static {class_name} fromJson(dynamic json) {{\n"
+        content += f"    if (json == null) return {default_val};\n"
+        content += f"    return {class_name}.values.firstWhere(\n"
+        content += f"      (e) => e.name == json.toString(),\n"
+        content += f"      orElse: () => {default_val},\n"
+        content += "    );\n"
+        content += "  }\n"
+        content += "}\n\n"
+        
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    
+    print(f"✨ ENUMS GÉNÉRÉS : {output_path.name}")
+
 # ==============================================================================
 # 4. EXÉCUTION
 # ==============================================================================
@@ -275,6 +325,7 @@ if __name__ == "__main__":
     print("\n🚀 Démarrage de la génération...")
     count = 0
     
+    # 1. Génération des Classes
     for model in MODELS_TO_GENERATE:
         try:
             dart_code = generate_dart_code(model)
@@ -288,6 +339,3 @@ if __name__ == "__main__":
             count += 1
         except Exception as e:
             print(f"  ❌ Erreur sur {model.__name__}: {e}")
-
-    print(f"\n🎉 TERMINÉ : {count} fichiers générés.")
-    print(f"👉 Emplacement : {FRONTEND_MODELS_DIR}")

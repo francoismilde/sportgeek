@@ -1,0 +1,27 @@
+// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
+// Timestamp : 2026-01-16T20:05:54.527140
+
+import 'enums.dart';
+
+class WeeklyPlan {
+  final List<dynamic> schedule;
+  final dynamic reasoning;
+
+  WeeklyPlan({
+    required this.schedule, required this.reasoning
+  });
+
+  factory WeeklyPlan.fromJson(Map<String, dynamic> json) {
+    return WeeklyPlan(
+      schedule: json['schedule'] ?? [],
+      reasoning: json['reasoning'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'schedule': schedule,
+      'reasoning': reasoning,
+    };
+  }
+}
