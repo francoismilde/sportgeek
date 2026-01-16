@@ -1,67 +1,32 @@
-from enum import Enum, IntEnum
-
-class CoachingMandate(str, Enum):
-    """
-    Niveau d'intervention du Coach IA.
-    - FULL_AUTO_PILOT : L'IA gère tout (Volume, Intensité, Sélection d'exos).
-    - PPG_ONLY : L'IA ne gère que la préparation physique (pas le sport spé).
-    - SUPPORT_HYBRID : L'IA propose, l'athlète dispose (mode assistant).
-    """
-    FULL_AUTO_PILOT = "FULL_AUTO_PILOT"
-    PPG_ONLY = "PPG_ONLY"
-    SUPPORT_HYBRID = "SUPPORT_HYBRID"
-
-class SlotStatus(str, Enum):
-    """
-    État d'un créneau horaire dans la matrice temporelle.
-    """
-    AVAILABLE = "AVAILABLE"           # Créneau libre pour l'entraînement
-    UNAVAILABLE = "UNAVAILABLE"       # Pris (Travail, Famille, etc.)
-    EXTERNAL_LOCKED = "EXTERNAL_LOCKED" # Pris par une contrainte sportive externe (Match, Club)
-
-class LocationContext(str, Enum):
-    """
-    Lieu d'entraînement disponible pour un créneau donné.
-    """
-    HOME = "HOME"                     # Maison (poids du corps, élastiques)
-    HOME_GYM_PRO = "HOME_GYM_PRO"     # Garage gym équipé
-    COMMERCIAL_GYM = "COMMERCIAL_GYM" # Salle de sport classique
-    OUTDOOR_TRACK = "OUTDOOR_TRACK"   # Piste d'athlé / Extérieur
-    POOL_25M = "POOL_25M"             # Piscine petit bain
-    POOL_50M = "POOL_50M"             # Piscine olympique
-
-class EnergyLevel(IntEnum):
-    """
-    Niveau d'énergie allouable sur un créneau (Score).
-    Utilisé pour le calcul de la charge (Load Management).
-    """
-    HIGH_FOCUS = 3    # Performance maximale
-    MEDIUM = 2        # Entraînement standard / Développement
-    LOW_RECOVERY = 1  # Récupération active / Technique légère
-
-# --- MEMORY ENUMS ---
+from enum import Enum
 
 class MemoryType(str, Enum):
-    """Type de souvenir structurel."""
-    INJURY_REPORT = "INJURY_REPORT"         # Blessure signalée
-    LIFE_CONSTRAINT = "LIFE_CONSTRAINT"     # Contrainte vie (voyage, examen...)
-    STRATEGIC_OVERRIDE = "STRATEGIC_OVERRIDE" # Changement de cap manuel
-    BIOFEEDBACK_LOG = "BIOFEEDBACK_LOG"     # Retour sensation spécifique
+    INJURY_REPORT = "INJURY_REPORT"          # ✅ CORRIGÉ
+    LIFE_CONSTRAINT = "LIFE_CONSTRAINT"      # ✅ CORRIGÉ
+    STRATEGIC_OVERRIDE = "STRATEGIC_OVERRIDE" # ✅ CORRIGÉ
+    BIOFEEDBACK_LOG = "BIOFEEDBACK_LOG"      # ✅ CORRIGÉ (Remplace PREFERENCE/OTHER)
 
 class ImpactLevel(str, Enum):
-    """Impact du souvenir sur la génération du plan."""
-    INFO = "INFO"           # À titre informatif
-    MODERATE = "MODERATE"   # Nécessite un ajustement mineur
-    SEVERE = "SEVERE"       # Bloque ou modifie drastiquement le plan
+    SEVERE = "SEVERE"      # ✅ CORRIGÉ (Remplace HIGH)
+    MODERATE = "MODERATE"  # ✅ CORRIGÉ (Remplace MEDIUM)
+    INFO = "INFO"          # ✅ CORRIGÉ (Remplace LOW)
 
 class MemoryStatus(str, Enum):
-    """Cycle de vie du souvenir."""
-    ACTIVE = "ACTIVE"       # En cours, pris en compte
-    SCHEDULED = "SCHEDULED" # Futur (ex: vacances prévues)
-    RESOLVED = "RESOLVED"   # Terminé, mais gardé en historique
-    ARCHIVED = "ARCHIVED"   # Supprimé logiquement
+    ACTIVE = "ACTIVE"
+    RESOLVED = "RESOLVED"
+    ARCHIVED = "ARCHIVED"
+    FORGOTTEN = "FORGOTTEN"
 
-# --- NEW ENUMS (MIGRATED FROM SCHEMAS) ---
+class FeedItemType(str, Enum):
+    INFO = "INFO"
+    ANALYSIS = "ANALYSIS"
+    ACTION = "ACTION"
+    ALERT = "ALERT"
+    WORKOUT_LOG = "WORKOUT_LOG"
+    COACH_INSIGHT = "COACH_INSIGHT"
+    PERSONAL_RECORD = "PERSONAL_RECORD"
+    SYSTEM_ALERT = "SYSTEM_ALERT"
+    DAILY_TIP = "DAILY_TIP"
 
 class SportType(str, Enum):
     RUGBY = "Rugby"
@@ -103,9 +68,3 @@ class EquipmentType(str, Enum):
     ROWER = "ROWER"
     TREADMILL = "TREADMILL"
     POOL = "POOL"
-
-class FeedItemType(str, Enum):
-    INFO = "INFO"
-    ANALYSIS = "ANALYSIS"
-    ACTION = "ACTION"
-    ALERT = "ALERT"
