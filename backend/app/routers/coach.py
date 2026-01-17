@@ -2,18 +2,22 @@ import os
 import json
 import re
 import google.generativeai as genai
+from typing import List, Dict, Any
+from datetime import date, datetime
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import select
+
 from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.models import sql_models, schemas
+from app.models.enums import MemoryType, ImpactLevel, MemoryStatus
 from app.models.schemas import (
     ProfileAuditRequest, ProfileAuditResponse, 
     StrategyResponse, WeeklyPlanResponse,
     GenerateWorkoutRequest, AIWorkoutPlan
 )
 from dotenv import load_dotenv
-from datetime import date
 
 load_dotenv()
 
@@ -44,13 +48,18 @@ def clean_ai_json(text: str) -> str:
 
 # --- PROMPTS ---
 
-def get_profile_analysis_prompt(profile_data):
-    """Génère le prompt pour l'audit du profil."""
+def get_profile_analysis_prompt_v2(profile_data):
+    """
+    Génère le prompt pour l'audit du profil avec EXTRACTION MÉMORIELLE (Engrams).
+    Le format de sortie est désormais un JSON strict.
+    """
     profile_str = json.dumps(profile_data, ensure_ascii=False, indent=2)
     return f"""
     RÔLE : Tu es le Lead Sport Scientist d'une fédération olympique (TitanFlow).
     TACHE : Auditer le profil d'un athlète et DÉFINIR LA LIGNE DIRECTRICE.
     
+    BUT CRITIQUE : Tu dois non seulement analyser, mais aussi "MÉMORISER" les points clés (Blessures, Contraintes, Objectifs) pour le futur.
+
     DONNÉES BRUTES ATHLÈTE (JSON) :
     {profile_str}
 
@@ -58,10 +67,34 @@ def get_profile_analysis_prompt(profile_data):
     1. Vérifie la cohérence "Niveau vs Performances".
     2. Vérifie la cohérence "Objectif vs Logistique (Dispo)".
     3. Identifie les risques de blessures ou les incohérences majeures.
+
+    FORMAT DE SORTIE (JSON STRICT - SANS MARKDOWN EXTERNE) :
+    {{
+        "markdown_report": "Ton analyse complète en Markdown (Titres, Emojis, Bullet points). Sois direct, bienveillant mais exigeant.",
+        "detected_engrams": [
+            {{
+                "type": "INJURY_REPORT", 
+                "impact": "SEVERE", 
+                "content": "Douleur genou gauche, éviter squat profond.",
+                "tags": ["knee", "injury"]
+            }},
+            {{
+                "type": "LIFE_CONSTRAINT", 
+                "impact": "MODERATE", 
+                "content": "Déplacements fréquents le mardi, prévoir séance courte ou bodyweight.",
+                "tags": ["travel", "tuesday"]
+            }},
+            {{
+                "type": "STRATEGIC_OVERRIDE", 
+                "impact": "INFO", 
+                "content": "Objectif Marathon en priorité sur l'hypertrophie jambes.",
+                "tags": ["goal", "running"]
+            }}
+        ]
+    }}
     
-    FORMAT DE SORTIE :
-    Réponds UNIQUEMENT en Markdown bien formaté.
-    Utilise des emojis. Sois direct, bienveillant mais exigeant.
+    Types de mémoire autorisés : INJURY_REPORT, LIFE_CONSTRAINT, STRATEGIC_OVERRIDE, BIOFEEDBACK_LOG.
+    Impacts autorisés : SEVERE, MODERATE, INFO.
     """
 
 def get_periodization_prompt(profile_data):
@@ -74,7 +107,6 @@ def get_periodization_prompt(profile_data):
     return f"""
     RÔLE : Directeur de Performance Sportive (Haut Niveau).
     CONTEXTE : Créer une PÉRIODISATION MACRO (Les Grandes Phases) pour un athlète.
-
     1. DONNÉES ATHLÈTE :
     {profile_str}
 
@@ -114,7 +146,7 @@ def get_weekly_planning_prompt(profile_data):
     
     slots_context = []
     for slot in avail:
-        if slot.get('isActive', False): # Adaptation au format Flutter (isActive vs Active)
+        if slot.get('isActive', False): 
              slots_context.append({
                 "Jour": slot.get('day'),
                 "Moment": slot.get('moment'),
@@ -127,14 +159,14 @@ def get_weekly_planning_prompt(profile_data):
     return f"""
     RÔLE : Entraîneur Expert en {user_sport}.
     MISSION : Générer la SEMAINE TYPE (Lundi-Dimanche) pour cet athlète.
-
     CONTEXTE ATHLÈTE :
     - Sport : {user_sport}
     - Niveau : {profile_data.get('level')}
     - Objectif : {profile_data.get('goal')}
 
     === CONTRAINTES STRICTES (MATRICE DE DISPONIBILITÉ) ===
-    Tu DOIS respecter ces créneaux à la lettre. Si un jour n'est pas listé ci-dessous, c'est REPOS.
+    Tu DOIS respecter ces créneaux à la lettre.
+    Si un jour n'est pas listé ci-dessous, c'est REPOS.
     {avail_json}
 
     RÈGLES D'ALLOCATION :
@@ -145,7 +177,7 @@ def get_weekly_planning_prompt(profile_data):
        - "Libre" = Choisis le mieux adapté pour l'équilibre.
     3. Si pas de créneau dispo un jour -> "Type": "Repos", "Focus": "Récupération".
     4. "RPE Cible" doit être un ENTIER (ex: 0 pour Repos, 7 pour une séance). Ne jamais mettre null.
-
+    
     FORMAT DE SORTIE (JSON OBJET) :
     {{
         "schedule": [
@@ -218,27 +250,101 @@ def get_workout_generation_prompt(profile_data, context):
 @router.post("/audit", response_model=ProfileAuditResponse)
 async def audit_profile(
     payload: ProfileAuditRequest,
+    db: Session = Depends(get_db),
     current_user: sql_models.User = Depends(get_current_user)
 ):
-    """Audit du profil athlète par l'IA."""
+    """
+    Audit du profil athlète par l'IA.
+    CRISTALLISATION SYNAPTIQUE : L'IA analyse le profil ET crée des souvenirs (Engrams) en BDD.
+    """
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="Clé API Gemini manquante.")
     
+    # 1. Vérification / Création du Profil et de la Mémoire
+    if not current_user.athlete_profile:
+        # Auto-création si manquant (Filet de sécurité)
+        profile = sql_models.AthleteProfile(user_id=current_user.id)
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+        current_user.athlete_profile = profile
+    
+    if not current_user.athlete_profile.coach_memory:
+        memory = sql_models.CoachMemory(athlete_profile_id=current_user.athlete_profile.id)
+        db.add(memory)
+        db.commit()
+        db.refresh(memory)
+
+    memory_id = current_user.athlete_profile.coach_memory.id
+
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        response = model.generate_content(get_profile_analysis_prompt(payload.profile_data))
+        model = genai.GenerativeModel('gemini-2.0-flash', generation_config={"response_mime_type": "application/json"})
         
-        # Stocker l'audit localement
-        from app.core.database import get_db
-        from sqlalchemy.orm import Session
-        db = next(get_db())
+        # 2. Appel IA avec le nouveau prompt structuré
+        response = model.generate_content(get_profile_analysis_prompt_v2(payload.profile_data))
+        
+        # 3. Parsing du JSON
+        clean_text = clean_ai_json(response.text)
+        result_json = json.loads(clean_text)
+        
+        markdown_report = result_json.get("markdown_report", "Erreur de génération du rapport.")
+        detected_engrams = result_json.get("detected_engrams", [])
+
+        created_engrams_response = []
+
+        # 4. Cristallisation (Sauvegarde des Engrammes)
+        if detected_engrams:
+            print(f"🧠 {len(detected_engrams)} souvenirs détectés. Cristallisation en cours...")
+            
+            for item in detected_engrams:
+                # Validation des Enums (Sécurité)
+                try:
+                    m_type = MemoryType(item.get("type", "OTHER"))
+                    m_impact = ImpactLevel(item.get("impact", "INFO"))
+                except ValueError:
+                    m_type = MemoryType.OTHER
+                    m_impact = ImpactLevel.INFO
+
+                # Création BDD
+                new_engram = sql_models.CoachEngram(
+                    memory_id=memory_id,
+                    author="COACH_AI_AUDIT",
+                    type=m_type,
+                    impact=m_impact,
+                    status=MemoryStatus.ACTIVE,
+                    content=item.get("content", "Information détectée"),
+                    tags=item.get("tags", []),
+                    start_date=datetime.utcnow()
+                )
+                db.add(new_engram)
+                db.flush() # Pour avoir l'ID tout de suite sans commit global
+                
+                # Ajout à la réponse pour le frontend
+                created_engrams_response.append(new_engram)
+            
+            # Mise à jour de la date de modification de la mémoire
+            current_user.athlete_profile.coach_memory.last_updated = datetime.utcnow()
+
+        # 5. Sauvegarde persistante des données JSON brutes (Legacy support)
         current_user.profile_data = json.dumps(payload.profile_data)
+        
         db.commit()
         
-        return {"markdown_report": response.text}
+        # 6. Retour structuré
+        return {
+            "markdown_report": markdown_report,
+            "generated_engrams": created_engrams_response
+        }
+
+    except json.JSONDecodeError as e:
+        print(f"❌ Erreur JSON IA: {e}")
+        # Fallback : on renvoie le texte brut si le JSON a échoué
+        return {"markdown_report": response.text, "generated_engrams": []}
+        
     except Exception as e:
         print(f"❌ Erreur audit: {e}")
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- STRATÉGIE (Lecture & Écriture Persistante) ---

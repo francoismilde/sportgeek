@@ -1,5 +1,5 @@
 // GÉNÉRÉ AUTOMATIQUEMENT
-// Timestamp : 2026-01-16T20:28:24.615950
+// Timestamp : 2026-01-17T08:56:00.155572
 
 import 'workout_set.dart';
 

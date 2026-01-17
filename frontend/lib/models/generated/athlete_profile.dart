@@ -1,5 +1,5 @@
 // GÉNÉRÉ AUTOMATIQUEMENT
-// Timestamp : 2026-01-16T20:28:24.604398
+// Timestamp : 2026-01-17T08:56:00.144681
 
 import 'basic_info.dart';
 import 'physical_metrics.dart';

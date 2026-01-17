@@ -1,18 +1,79 @@
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import List, Optional, Dict, Any, Union
 from datetime import date, datetime
 from enum import Enum
 import json
-import re
-import logging
 
-# ✅ IMPORT CENTRALISÉ (On récupère tout depuis enums.py)
-from app.models.enums import (
-    MemoryType, ImpactLevel, MemoryStatus, 
-    SportType, EquipmentType, FeedItemType
-)
+# --- ENUMS & TYPES ---
 
-logger = logging.getLogger(__name__)
+class MemoryType(str, Enum):
+    INJURY_REPORT = "INJURY_REPORT"
+    LIFE_CONSTRAINT = "LIFE_CONSTRAINT"
+    STRATEGIC_OVERRIDE = "STRATEGIC_OVERRIDE"
+    BIOFEEDBACK_LOG = "BIOFEEDBACK_LOG"
+
+class ImpactLevel(str, Enum):
+    SEVERE = "SEVERE"
+    MODERATE = "MODERATE"
+    INFO = "INFO"
+
+class MemoryStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    RESOLVED = "RESOLVED"
+    ARCHIVED = "ARCHIVED"
+    FORGOTTEN = "FORGOTTEN"
+
+class FeedItemType(str, Enum):
+    INFO = "INFO"
+    ANALYSIS = "ANALYSIS"
+    ACTION = "ACTION"
+    ALERT = "ALERT"
+    WORKOUT_LOG = "WORKOUT_LOG"
+    COACH_INSIGHT = "COACH_INSIGHT"
+    PERSONAL_RECORD = "PERSONAL_RECORD"
+    SYSTEM_ALERT = "SYSTEM_ALERT"
+    DAILY_TIP = "DAILY_TIP"
+
+class SportType(str, Enum):
+    RUGBY = "Rugby"
+    FOOTBALL = "Football"
+    CROSSFIT = "CrossFit"
+    HYBRID = "Hybrid"
+    RUNNING = "Running"
+    OTHER = "Autre"
+    BODYBUILDING = "BODYBUILDING"
+    CYCLING = "CYCLING"
+    TRIATHLON = "TRIATHLON"
+    POWERLIFTING = "POWERLIFTING"
+    SWIMMING = "SWIMMING"
+    COMBAT_SPORTS = "COMBAT_SPORTS"
+
+class EquipmentType(str, Enum):
+    PERFORMANCE_LAB = "PERFORMANCE_LAB"
+    COMMERCIAL_GYM = "COMMERCIAL_GYM"
+    HOME_GYM_BARBELL = "HOME_GYM_BARBELL"
+    HOME_GYM_DUMBBELL = "HOME_GYM_DUMBBELL"
+    CALISTHENICS_KIT = "CALISTHENICS_KIT"
+    BODYWEIGHT_ZERO = "BODYWEIGHT_ZERO"
+    ENDURANCE_SUITE = "ENDURANCE_SUITE"
+    STANDARD = "Standard"
+    HOME_GYM_FULL = "HOME_GYM_FULL"
+    CROSSFIT_BOX = "CROSSFIT_BOX"
+    DUMBBELLS = "DUMBBELLS"
+    BARBELL = "BARBELL"
+    KETTLEBELLS = "KETTLEBELLS"
+    PULL_UP_BAR = "PULL_UP_BAR"
+    BENCH = "BENCH"
+    DIP_STATION = "DIP_STATION"
+    BANDS = "BANDS"
+    RINGS_TRX = "RINGS_TRX"
+    JUMP_ROPE = "JUMP_ROPE"
+    WEIGHT_VEST = "WEIGHT_VEST"
+    BIKE = "BIKE"
+    HOME_TRAINER = "HOME_TRAINER"
+    ROWER = "ROWER"
+    TREADMILL = "TREADMILL"
+    POOL = "POOL"
 
 # --- PERFORMANCE METRICS SUB-SCHEMAS ---
 
@@ -73,7 +134,6 @@ class SwimmingMetrics(BaseModel):
         return v
 
 class PerformanceBaselineSchema(CyclingMetrics, RunningMetrics, SwimmingMetrics):
-    # Champs supplémentaires pour accepter les données brutes du mobile
     run_vma_est: Optional[str] = None
     cycling_ftp_est: Optional[str] = None
     swim_css_est: Optional[str] = None
@@ -105,7 +165,6 @@ class PerformanceBaselineSchema(CyclingMetrics, RunningMetrics, SwimmingMetrics)
 
     @field_validator('*', mode='before')
     def clean_none_values(cls, v, info):
-        """Nettoie les valeurs None et chaînes vides."""
         if info.field_name not in ['run_vma_est', 'cycling_ftp_est', 'swim_css_est']:
             if v in [None, "", "null", "undefined"]:
                 return None
@@ -135,10 +194,8 @@ class SportContext(BaseModel):
 
     @field_validator('equipment', mode='before')
     def migrate_legacy_equipment(cls, v):
-        """Transforme les anciennes valeurs 'Standard' en 'COMMERCIAL_GYM'."""
         if not v:
             return [EquipmentType.BODYWEIGHT_ZERO]
-        
         cleaned_list = []
         if isinstance(v, list):
             for item in v:
@@ -163,27 +220,21 @@ class AthleteProfileBase(BaseModel):
     goals: Dict[str, Any] = {}
     constraints: Dict[str, Any] = {}
     injury_prevention: Dict[str, Any] = {}
-    
     performance_baseline: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator('performance_baseline', mode='before')
     def parse_performance(cls, v):
-        """Nettoie et valide les données de performance."""
-        if v is None:
-            return {}
+        if v is None: return {}
         try:
             if isinstance(v, dict):
                 cleaned = {}
                 for key, value in v.items():
-                    if value in [None, "", "null", "undefined"]:
-                        continue
-                    if key in ['run_vma_est', 'cycling_ftp_est', 'swim_css_est'] and value == "":
-                        continue
+                    if value in [None, "", "null", "undefined"]: continue
+                    if key in ['run_vma_est', 'cycling_ftp_est', 'swim_css_est'] and value == "": continue
                     cleaned[key] = value
                 return cleaned
             return {}
-        except Exception as e:
-            logger.error(f"Erreur validation performance_baseline: {e}")
+        except Exception:
             return {}
 
 class AthleteProfileCreate(AthleteProfileBase):
@@ -212,10 +263,6 @@ class CoachEngramCreate(CoachEngramBase):
     pass
 
 class CoachEngramUpdate(BaseModel):
-    """
-    Schema pour la mise à jour (PUT) d'un souvenir.
-    Tous les champs sont optionnels.
-    """
     content: Optional[str] = None
     type: Optional[MemoryType] = None
     impact: Optional[ImpactLevel] = None
@@ -228,7 +275,6 @@ class CoachEngramResponse(CoachEngramBase):
     memory_id: int
     author: str
     created_at: Optional[datetime] = None
-    
     class Config:
         from_attributes = True
 
@@ -240,8 +286,6 @@ class CoachMemoryResponse(BaseModel):
     current_phase: str = "Général"
     flags: Dict[str, bool] = {}
     insights: Dict[str, Any] = {}
-    
-    # Liste des souvenirs (Engrammes)
     engrams: List[CoachEngramResponse] = []
 
     @field_validator('readiness_score', mode='before')
@@ -258,7 +302,6 @@ class CoachMemoryOut(BaseModel):
     athlete_profile_id: int
     current_context: Optional[Dict[str, Any]] = None
     memory_flags: Optional[Dict[str, Any]] = None
-    
     class Config:
         from_attributes = True
 
@@ -298,10 +341,8 @@ class WorkoutSetBase(BaseModel):
                     return seconds
                 except ValueError:
                     return 0.0
-            try:
-                return float(v)
-            except ValueError:
-                return 0.0
+            try: return float(v)
+            except ValueError: return 0.0
         return v
 
 class WorkoutSetCreate(WorkoutSetBase):
@@ -369,19 +410,13 @@ class UserResponse(BaseModel):
     
     @field_validator('profile_data', mode='before')
     def parse_profile_data(cls, v):
-        if v is None:
-            return {}
-        if isinstance(v, dict):
-            return v
+        if v is None: return {}
+        if isinstance(v, dict): return v
         if isinstance(v, str):
-            if not v.strip():
-                return {}
-            try:
-                return json.loads(v)
-            except json.JSONDecodeError:
-                return {}
+            if not v.strip(): return {}
+            try: return json.loads(v)
+            except json.JSONDecodeError: return {}
         return v
-
     class Config:
         from_attributes = True
 
@@ -435,6 +470,7 @@ class ProfileAuditRequest(BaseModel):
     profile_data: Dict[str, Any]
 class ProfileAuditResponse(BaseModel):
     markdown_report: str
+    generated_engrams: List[CoachEngramResponse] = [] # ✅ Ajout Critique : Liste des souvenirs créés
 class StrategyResponse(BaseModel):
     periodization_title: str
     phases: List[Any]

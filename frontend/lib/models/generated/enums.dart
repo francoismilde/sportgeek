@@ -1,28 +1,26 @@
 // GÉNÉRÉ AUTOMATIQUEMENT
-// Timestamp : 2026-01-16T20:28:24.624205
+// Timestamp : 2026-01-17T08:56:00.165282
 
 enum MemoryType {
-  INJURY,
-  CONSTRAINT,
-  PREFERENCE,
-  STRATEGY,
-  OTHER;
+  INJURY_REPORT,
+  LIFE_CONSTRAINT,
+  STRATEGIC_OVERRIDE,
+  BIOFEEDBACK_LOG;
 
   String toJson() => name;
   static MemoryType fromJson(dynamic json) {
-    return MemoryType.values.firstWhere((e) => e.name == json.toString(), orElse: () => OTHER);
+    return MemoryType.values.firstWhere((e) => e.name == json.toString(), orElse: () => INJURY_REPORT);
   }
 }
 
 enum ImpactLevel {
-  HIGH,
-  MEDIUM,
-  LOW,
+  SEVERE,
+  MODERATE,
   INFO;
 
   String toJson() => name;
   static ImpactLevel fromJson(dynamic json) {
-    return ImpactLevel.values.firstWhere((e) => e.name == json.toString(), orElse: () => HIGH);
+    return ImpactLevel.values.firstWhere((e) => e.name == json.toString(), orElse: () => SEVERE);
   }
 }
 

@@ -1,5 +1,5 @@
 // GÉNÉRÉ AUTOMATIQUEMENT
-// Timestamp : 2026-01-16T20:28:24.613778
+// Timestamp : 2026-01-17T08:56:00.152951
 
 import 'enums.dart';
 

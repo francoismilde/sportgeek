@@ -1108,17 +1108,15 @@ class AthleteProfileDomain(BaseModel):
 from enum import Enum
 
 class MemoryType(str, Enum):
-    INJURY = "INJURY"
-    CONSTRAINT = "CONSTRAINT"
-    PREFERENCE = "PREFERENCE"
-    STRATEGY = "STRATEGY"
-    OTHER = "OTHER"  # ✅ Ajouté pour le Frontend
+    INJURY_REPORT = "INJURY_REPORT"          # ✅ CORRIGÉ
+    LIFE_CONSTRAINT = "LIFE_CONSTRAINT"      # ✅ CORRIGÉ
+    STRATEGIC_OVERRIDE = "STRATEGIC_OVERRIDE" # ✅ CORRIGÉ
+    BIOFEEDBACK_LOG = "BIOFEEDBACK_LOG"      # ✅ CORRIGÉ (Remplace PREFERENCE/OTHER)
 
 class ImpactLevel(str, Enum):
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"      # ✅ Ajouté (équivalent à INFO parfois)
-    INFO = "INFO"    # Gardé pour rétro-compatibilité
+    SEVERE = "SEVERE"      # ✅ CORRIGÉ (Remplace HIGH)
+    MODERATE = "MODERATE"  # ✅ CORRIGÉ (Remplace MEDIUM)
+    INFO = "INFO"          # ✅ CORRIGÉ (Remplace LOW)
 
 class MemoryStatus(str, Enum):
     ACTIVE = "ACTIVE"
@@ -3121,6 +3119,43 @@ async def delete_memory(
         raise HTTPException(status_code=404, detail="Souvenir introuvable")
 
     db.delete(memory)
+    db.commit()
+    return None
+
+# ==============================================================================
+# 🗑️ DELETE ENGRAM (La route manquante pour corriger l'erreur 405)
+# ==============================================================================
+@router.delete("/engrams/{engram_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_engram(
+    engram_id: int,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Supprime un souvenir spécifique (Engramme).
+    """
+    # 1. Vérification de propriété (Sécurité)
+    # On s'assure que l'engramme appartient bien à une mémoire liée au user connecté
+    engram = db.query(sql_models.CoachEngram)\
+        .join(sql_models.CoachMemory)\
+        .join(sql_models.AthleteProfile)\
+        .filter(
+            sql_models.CoachEngram.id == engram_id,
+            sql_models.AthleteProfile.user_id == current_user.id
+        ).first()
+
+    if not engram:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Engramme introuvable ou accès refusé."
+        )
+
+    # 2. Suppression physique
+    db.delete(engram)
+    
+    # 3. Update Meta (Optionnel : dire à la mémoire qu'elle a changé)
+    engram.memory.last_updated = datetime.utcnow()
+    
     db.commit()
     return None-e 
 
@@ -5409,6 +5444,7 @@ import os
 from datetime import datetime, timedelta
 
 # --- CONFIGURATION DU PATH ---
+# Permet d'importer les modules 'app' même si on lance le script depuis backend/
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
@@ -5426,6 +5462,7 @@ except ImportError as e:
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# Configuration de la connexion DB
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -5452,8 +5489,9 @@ def repair_and_seed(target_user_id: int):
             # Création d'un profil minimal pour satisfaire la Foreign Key
             profile = AthleteProfile(
                 user_id=user.id,
-                biometrics={"weight": 80, "height": 180}, # Valeurs par défaut
-                performance_metrics={}
+                basic_info={"pseudo": user.username, "generated": True},
+                physical_metrics={"weight": 80, "height": 180},
+                performance_baseline={}
             )
             db.add(profile)
             db.commit()
@@ -5462,7 +5500,7 @@ def repair_and_seed(target_user_id: int):
         else:
             print(f"  - ✅ Profil athlétique existant trouvé (ID: {profile.id}).")
 
-        # C'est cet ID qu'on doit utiliser, pas forcément 17 !
+        # C'est cet ID qu'on doit utiliser pour lier la mémoire
         real_profile_id = profile.id
 
         # ÉTAPE 3 : Validation ou Création de la Mémoire
@@ -5472,9 +5510,9 @@ def repair_and_seed(target_user_id: int):
             print(f"  - Création du conteneur CoachMemory pour le Profil {real_profile_id}...")
             memory = CoachMemory(
                 athlete_profile_id=real_profile_id,
-                coach_notes={},
+                coach_notes={"source": "repair_script"},
                 memory_flags={},
-                current_context={}
+                current_context={"readiness_score": 85}
             )
             db.add(memory)
             db.commit()
@@ -5483,6 +5521,7 @@ def repair_and_seed(target_user_id: int):
             print(f"  - Conteneur CoachMemory trouvé (ID: {memory.id})")
 
         # ÉTAPE 4 : Injection des Engrammes (Souvenirs)
+        # Note : On utilise 'ACTIVE' même pour les événements futurs (SCHEDULED n'existe pas dans l'Enum SQL)
         engrams_data = [
             {
                 "type": MemoryType.INJURY_REPORT,
@@ -5496,7 +5535,8 @@ def repair_and_seed(target_user_id: int):
             {
                 "type": MemoryType.LIFE_CONSTRAINT,
                 "impact": ImpactLevel.MODERATE,
-                "status": MemoryStatus.SCHEDULED,
+                # [CORRECTIF] Utilisation de ACTIVE car SCHEDULED n'est pas dans l'Enum
+                "status": MemoryStatus.ACTIVE, 
                 "content": "Déplacement Londres. Matériel limité.",
                 "tags": ["travel"],
                 "start_date": datetime.now() + timedelta(days=5),
@@ -5515,6 +5555,7 @@ def repair_and_seed(target_user_id: int):
 
         count = 0
         for data in engrams_data:
+            # On vérifie si un engramme identique existe déjà pour ne pas dupliquer
             exists = db.query(CoachEngram).filter(
                 CoachEngram.memory_id == memory.id,
                 CoachEngram.content == data["content"]
@@ -5541,8 +5582,9 @@ def repair_and_seed(target_user_id: int):
         db.close()
 
 if __name__ == "__main__":
-    # On cible l'USER 17, le script se débrouillera pour trouver/créer le reste
-    repair_and_seed(target_user_id=17)-e 
+    # Remplacez 17 par l'ID de votre utilisateur si nécessaire,
+    # ou laissez 17 si c'est celui que vous utilisez pour tester.
+    repair_and_seed(target_user_id=1)-e 
 
 -e 
 ================================================================================
@@ -7294,6 +7336,48 @@ class AthleteProfile {
 
 -e 
 ================================================================================
+📄 FICHIER : frontend/lib/models/generated/basic_info.dart
+================================================================================
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.605472
+
+
+
+class BasicInfo {
+  final dynamic pseudo;
+  final dynamic email;
+  final dynamic birthDate;
+  final dynamic trainingAge;
+  final dynamic biologicalSex;
+
+  BasicInfo({
+    required this.pseudo, required this.email, required this.birthDate, required this.trainingAge, required this.biologicalSex
+  });
+
+  factory BasicInfo.fromJson(Map<String, dynamic> json) {
+    return BasicInfo(
+      pseudo: json['pseudo'],
+      email: json['email'],
+      birthDate: json['birth_date'],
+      trainingAge: json['training_age'],
+      biologicalSex: json['biological_sex'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'pseudo': pseudo,
+      'email': email,
+      'birth_date': birthDate,
+      'training_age': trainingAge,
+      'biological_sex': biologicalSex,
+    };
+  }
+}
+-e 
+
+-e 
+================================================================================
 📄 FICHIER : frontend/lib/models/generated/coach_engram.dart
 ================================================================================
 // GÉNÉRÉ AUTOMATIQUEMENT
@@ -7396,6 +7480,122 @@ class CoachMemory {
 
 -e 
 ================================================================================
+📄 FICHIER : frontend/lib/models/generated/enums.dart
+================================================================================
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.624205
+
+enum MemoryType {
+  INJURY,
+  CONSTRAINT,
+  PREFERENCE,
+  STRATEGY,
+  OTHER;
+
+  String toJson() => name;
+  static MemoryType fromJson(dynamic json) {
+    return MemoryType.values.firstWhere((e) => e.name == json.toString(), orElse: () => OTHER);
+  }
+}
+
+enum ImpactLevel {
+  HIGH,
+  MEDIUM,
+  LOW,
+  INFO;
+
+  String toJson() => name;
+  static ImpactLevel fromJson(dynamic json) {
+    return ImpactLevel.values.firstWhere((e) => e.name == json.toString(), orElse: () => HIGH);
+  }
+}
+
+enum MemoryStatus {
+  ACTIVE,
+  RESOLVED,
+  ARCHIVED,
+  FORGOTTEN;
+
+  String toJson() => name;
+  static MemoryStatus fromJson(dynamic json) {
+    return MemoryStatus.values.firstWhere((e) => e.name == json.toString(), orElse: () => ACTIVE);
+  }
+}
+
+enum FeedItemType {
+  INFO,
+  ANALYSIS,
+  ACTION,
+  ALERT,
+  WORKOUT_LOG,
+  COACH_INSIGHT,
+  PERSONAL_RECORD,
+  SYSTEM_ALERT,
+  DAILY_TIP;
+
+  String toJson() => name;
+  static FeedItemType fromJson(dynamic json) {
+    return FeedItemType.values.firstWhere((e) => e.name == json.toString(), orElse: () => INFO);
+  }
+}
+
+enum SportType {
+  RUGBY,
+  FOOTBALL,
+  CROSSFIT,
+  HYBRID,
+  RUNNING,
+  OTHER,
+  BODYBUILDING,
+  CYCLING,
+  TRIATHLON,
+  POWERLIFTING,
+  SWIMMING,
+  COMBAT_SPORTS;
+
+  String toJson() => name;
+  static SportType fromJson(dynamic json) {
+    return SportType.values.firstWhere((e) => e.name == json.toString(), orElse: () => COMBAT_SPORTS);
+  }
+}
+
+enum EquipmentType {
+  PERFORMANCE_LAB,
+  COMMERCIAL_GYM,
+  HOME_GYM_BARBELL,
+  HOME_GYM_DUMBBELL,
+  CALISTHENICS_KIT,
+  BODYWEIGHT_ZERO,
+  ENDURANCE_SUITE,
+  STANDARD,
+  HOME_GYM_FULL,
+  CROSSFIT_BOX,
+  DUMBBELLS,
+  BARBELL,
+  KETTLEBELLS,
+  PULL_UP_BAR,
+  BENCH,
+  DIP_STATION,
+  BANDS,
+  RINGS_TRX,
+  JUMP_ROPE,
+  WEIGHT_VEST,
+  BIKE,
+  HOME_TRAINER,
+  ROWER,
+  TREADMILL,
+  POOL;
+
+  String toJson() => name;
+  static EquipmentType fromJson(dynamic json) {
+    return EquipmentType.values.firstWhere((e) => e.name == json.toString(), orElse: () => PERFORMANCE_LAB);
+  }
+}
+
+-e 
+
+-e 
+================================================================================
 📄 FICHIER : frontend/lib/models/generated/feed_item.dart
 ================================================================================
 // GÉNÉRÉ AUTOMATIQUEMENT
@@ -7483,6 +7683,48 @@ class OneRepMax {
 
 -e 
 ================================================================================
+📄 FICHIER : frontend/lib/models/generated/physical_metrics.dart
+================================================================================
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.606446
+
+
+
+class PhysicalMetrics {
+  final dynamic height;
+  final dynamic weight;
+  final dynamic bodyFat;
+  final dynamic restingHr;
+  final dynamic sleepQualityAvg;
+
+  PhysicalMetrics({
+    required this.height, required this.weight, required this.bodyFat, required this.restingHr, required this.sleepQualityAvg
+  });
+
+  factory PhysicalMetrics.fromJson(Map<String, dynamic> json) {
+    return PhysicalMetrics(
+      height: json['height'],
+      weight: json['weight'],
+      bodyFat: json['body_fat'],
+      restingHr: json['resting_hr'],
+      sleepQualityAvg: json['sleep_quality_avg'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'height': height,
+      'weight': weight,
+      'body_fat': bodyFat,
+      'resting_hr': restingHr,
+      'sleep_quality_avg': sleepQualityAvg,
+    };
+  }
+}
+-e 
+
+-e 
+================================================================================
 📄 FICHIER : frontend/lib/models/generated/profile_audit.dart
 ================================================================================
 // GÉNÉRÉ AUTOMATIQUEMENT
@@ -7506,6 +7748,45 @@ class ProfileAudit {
   Map<String, dynamic> toJson() {
     return {
       'markdown_report': markdownReport,
+    };
+  }
+}
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : frontend/lib/models/generated/sport_context.dart
+================================================================================
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.607969
+
+import 'enums.dart';
+
+class SportContext {
+  final SportType sport;
+  final dynamic position;
+  final dynamic level;
+  final List<EquipmentType> equipment;
+
+  SportContext({
+    required this.sport, required this.position, required this.level, required this.equipment
+  });
+
+  factory SportContext.fromJson(Map<String, dynamic> json) {
+    return SportContext(
+      sport: json['sport'] != null ? SportType.fromJson(json['sport']) : SportType.values.first,
+      position: json['position'],
+      level: json['level'],
+      equipment: json['equipment'] ?? [],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'sport': sport.toJson(),
+      'position': position,
+      'level': level,
+      'equipment': equipment,
     };
   }
 }
@@ -7572,6 +7853,42 @@ class Token {
     return {
       'access_token': accessToken,
       'token_type': tokenType,
+    };
+  }
+}
+-e 
+
+-e 
+================================================================================
+📄 FICHIER : frontend/lib/models/generated/training_preferences.dart
+================================================================================
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.608890
+
+
+
+class TrainingPreferences {
+  final List<dynamic> daysAvailable;
+  final dynamic durationMin;
+  final dynamic preferredSplit;
+
+  TrainingPreferences({
+    required this.daysAvailable, required this.durationMin, required this.preferredSplit
+  });
+
+  factory TrainingPreferences.fromJson(Map<String, dynamic> json) {
+    return TrainingPreferences(
+      daysAvailable: json['days_available'] ?? [],
+      durationMin: json['duration_min'],
+      preferredSplit: json['preferred_split'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'days_available': daysAvailable,
+      'duration_min': durationMin,
+      'preferred_split': preferredSplit,
     };
   }
 }
