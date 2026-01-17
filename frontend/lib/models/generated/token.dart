@@ -1,7 +1,7 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.510931
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.600521
 
-import 'enums.dart';
+
 
 class Token {
   final dynamic accessToken;

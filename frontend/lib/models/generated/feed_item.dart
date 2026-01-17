@@ -1,5 +1,5 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.529169
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.622965
 
 import 'enums.dart';
 
@@ -8,19 +8,19 @@ class FeedItem {
   final dynamic title;
   final dynamic message;
   final dynamic priority;
-  final dynamic? actionPayload;
+  final dynamic actionPayload;
   final dynamic id;
   final dynamic isRead;
   final dynamic isCompleted;
   final dynamic createdAt;
 
   FeedItem({
-    required this.type, required this.title, required this.message, required this.priority, this.actionPayload, required this.id, required this.isRead, required this.isCompleted, required this.createdAt
+    required this.type, required this.title, required this.message, required this.priority, required this.actionPayload, required this.id, required this.isRead, required this.isCompleted, required this.createdAt
   });
 
   factory FeedItem.fromJson(Map<String, dynamic> json) {
     return FeedItem(
-      type: json['type'] != null ? FeedItemType.fromJson(json['type']) : null ?? FeedItemType.values.first,
+      type: json['type'] != null ? FeedItemType.fromJson(json['type']) : FeedItemType.values.first,
       title: json['title'],
       message: json['message'],
       priority: json['priority'],
@@ -34,7 +34,7 @@ class FeedItem {
 
   Map<String, dynamic> toJson() {
     return {
-      'type': type?.toJson(),
+      'type': type.toJson(),
       'title': title,
       'message': message,
       'priority': priority,

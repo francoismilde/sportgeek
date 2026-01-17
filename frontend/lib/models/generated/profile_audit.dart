@@ -1,7 +1,7 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.528137
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.621806
 
-import 'enums.dart';
+
 
 class ProfileAudit {
   final dynamic markdownReport;

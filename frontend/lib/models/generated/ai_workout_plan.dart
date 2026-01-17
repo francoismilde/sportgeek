@@ -1,7 +1,7 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.525781
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.618409
 
-import 'enums.dart';
+import 'ai_exercise.dart';
 
 class AIWorkoutPlan {
   final dynamic title;
@@ -29,7 +29,7 @@ class AIWorkoutPlan {
       'title': title,
       'coach_comment': coachComment,
       'warmup': warmup,
-      'exercises': exercises?.map((e) => e.toJson()).toList(),
+      'exercises': exercises.map((e) => e.toJson()).toList(),
       'cooldown': cooldown,
     };
   }

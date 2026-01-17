@@ -1,20 +1,20 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.523303
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.615950
 
-import 'enums.dart';
+import 'workout_set.dart';
 
 class WorkoutSession {
   final dynamic date;
   final dynamic duration;
   final dynamic rpe;
   final dynamic energyLevel;
-  final dynamic? notes;
-  final dynamic? aiAnalysis;
+  final dynamic notes;
+  final dynamic aiAnalysis;
   final List<WorkoutSet> sets;
   final dynamic id;
 
   WorkoutSession({
-    required this.date, required this.duration, required this.rpe, required this.energyLevel, this.notes, this.aiAnalysis, required this.sets, required this.id
+    required this.date, required this.duration, required this.rpe, required this.energyLevel, required this.notes, required this.aiAnalysis, required this.sets, required this.id
   });
 
   factory WorkoutSession.fromJson(Map<String, dynamic> json) {
@@ -38,7 +38,7 @@ class WorkoutSession {
       'energy_level': energyLevel,
       'notes': notes,
       'ai_analysis': aiAnalysis,
-      'sets': sets?.map((e) => e.toJson()).toList(),
+      'sets': sets.map((e) => e.toJson()).toList(),
       'id': id,
     };
   }

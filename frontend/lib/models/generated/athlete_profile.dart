@@ -1,7 +1,10 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.515891
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.604398
 
-import 'enums.dart';
+import 'basic_info.dart';
+import 'physical_metrics.dart';
+import 'sport_context.dart';
+import 'training_preferences.dart';
 
 class AthleteProfile {
   final BasicInfo basicInfo;
@@ -14,19 +17,19 @@ class AthleteProfile {
   final dynamic performanceBaseline;
   final dynamic id;
   final dynamic userId;
-  final dynamic? createdAt;
-  final dynamic? updatedAt;
+  final dynamic createdAt;
+  final dynamic updatedAt;
 
   AthleteProfile({
-    required this.basicInfo, required this.physicalMetrics, required this.sportContext, required this.trainingPreferences, required this.goals, required this.constraints, required this.injuryPrevention, required this.performanceBaseline, required this.id, required this.userId, this.createdAt, this.updatedAt
+    required this.basicInfo, required this.physicalMetrics, required this.sportContext, required this.trainingPreferences, required this.goals, required this.constraints, required this.injuryPrevention, required this.performanceBaseline, required this.id, required this.userId, required this.createdAt, required this.updatedAt
   });
 
   factory AthleteProfile.fromJson(Map<String, dynamic> json) {
     return AthleteProfile(
-      basicInfo: json['basic_info'] != null ? BasicInfo.fromJson(json['basic_info']) : null,
-      physicalMetrics: json['physical_metrics'] != null ? PhysicalMetrics.fromJson(json['physical_metrics']) : null,
-      sportContext: json['sport_context'] != null ? SportContext.fromJson(json['sport_context']) : null,
-      trainingPreferences: json['training_preferences'] != null ? TrainingPreferences.fromJson(json['training_preferences']) : null,
+      basicInfo: BasicInfo.fromJson(json['basic_info'] ?? {}),
+      physicalMetrics: PhysicalMetrics.fromJson(json['physical_metrics'] ?? {}),
+      sportContext: SportContext.fromJson(json['sport_context'] ?? {}),
+      trainingPreferences: TrainingPreferences.fromJson(json['training_preferences'] ?? {}),
       goals: json['goals'],
       constraints: json['constraints'],
       injuryPrevention: json['injury_prevention'],
@@ -40,10 +43,10 @@ class AthleteProfile {
 
   Map<String, dynamic> toJson() {
     return {
-      'basic_info': basicInfo?.toJson(),
-      'physical_metrics': physicalMetrics?.toJson(),
-      'sport_context': sportContext?.toJson(),
-      'training_preferences': trainingPreferences?.toJson(),
+      'basic_info': basicInfo.toJson(),
+      'physical_metrics': physicalMetrics.toJson(),
+      'sport_context': sportContext.toJson(),
+      'training_preferences': trainingPreferences.toJson(),
       'goals': goals,
       'constraints': constraints,
       'injury_prevention': injuryPrevention,

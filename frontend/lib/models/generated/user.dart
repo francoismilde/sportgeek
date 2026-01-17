@@ -1,16 +1,16 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.510125
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.599658
 
-import 'enums.dart';
+
 
 class User {
   final dynamic id;
   final dynamic username;
-  final dynamic? email;
-  final dynamic? profileData;
+  final dynamic email;
+  final dynamic profileData;
 
   User({
-    required this.id, required this.username, this.email, this.profileData
+    required this.id, required this.username, required this.email, required this.profileData
   });
 
   factory User.fromJson(Map<String, dynamic> json) {

@@ -1,7 +1,7 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.529675
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.623484
 
-import 'enums.dart';
+
 
 class OneRepMax {
   final dynamic estimated1Rm;

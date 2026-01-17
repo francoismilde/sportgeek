@@ -1,7 +1,7 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.519286
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.611966
 
-import 'enums.dart';
+import 'coach_engram.dart';
 
 class CoachMemory {
   final dynamic id;
@@ -33,7 +33,7 @@ class CoachMemory {
       'current_phase': currentPhase,
       'flags': flags,
       'insights': insights,
-      'engrams': engrams?.map((e) => e.toJson()).toList(),
+      'engrams': engrams.map((e) => e.toJson()).toList(),
     };
   }
 }

@@ -1,20 +1,20 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.524342
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.616957
 
-import 'enums.dart';
+
 
 class WorkoutSet {
   final dynamic exerciseName;
   final dynamic setOrder;
   final dynamic weight;
   final dynamic reps;
-  final dynamic? rpe;
+  final dynamic rpe;
   final dynamic restSeconds;
   final dynamic metricType;
   final dynamic id;
 
   WorkoutSet({
-    required this.exerciseName, required this.setOrder, required this.weight, required this.reps, this.rpe, required this.restSeconds, required this.metricType, required this.id
+    required this.exerciseName, required this.setOrder, required this.weight, required this.reps, required this.rpe, required this.restSeconds, required this.metricType, required this.id
   });
 
   factory WorkoutSet.fromJson(Map<String, dynamic> json) {

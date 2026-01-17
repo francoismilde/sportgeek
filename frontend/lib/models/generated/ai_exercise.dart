@@ -1,7 +1,7 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.526620
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.620342
 
-import 'enums.dart';
+
 
 class AIExercise {
   final dynamic name;
@@ -12,7 +12,7 @@ class AIExercise {
   final dynamic recordingMode;
 
   AIExercise({
-    required this.name, required this.sets, this.reps, required this.rest, required this.tips, required this.recordingMode
+    required this.name, required this.sets, required this.reps, required this.rest, required this.tips, required this.recordingMode
   });
 
   factory AIExercise.fromJson(Map<String, dynamic> json) {

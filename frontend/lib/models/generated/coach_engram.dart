@@ -1,5 +1,5 @@
-// GÉNÉRÉ AUTOMATIQUEMENT - NE PAS MODIFIER
-// Timestamp : 2026-01-16T20:05:54.521247
+// GÉNÉRÉ AUTOMATIQUEMENT
+// Timestamp : 2026-01-16T20:28:24.613778
 
 import 'enums.dart';
 
@@ -9,21 +9,21 @@ class CoachEngram {
   final MemoryStatus status;
   final dynamic content;
   final List<dynamic> tags;
-  final dynamic? endDate;
+  final dynamic endDate;
   final dynamic id;
   final dynamic memoryId;
   final dynamic author;
-  final dynamic? createdAt;
+  final dynamic createdAt;
 
   CoachEngram({
-    required this.type, required this.impact, required this.status, required this.content, required this.tags, this.endDate, required this.id, required this.memoryId, required this.author, this.createdAt
+    required this.type, required this.impact, required this.status, required this.content, required this.tags, required this.endDate, required this.id, required this.memoryId, required this.author, required this.createdAt
   });
 
   factory CoachEngram.fromJson(Map<String, dynamic> json) {
     return CoachEngram(
-      type: json['type'] != null ? MemoryType.fromJson(json['type']) : null ?? MemoryType.values.first,
-      impact: json['impact'] != null ? ImpactLevel.fromJson(json['impact']) : null ?? ImpactLevel.values.first,
-      status: json['status'] != null ? MemoryStatus.fromJson(json['status']) : null ?? MemoryStatus.values.first,
+      type: json['type'] != null ? MemoryType.fromJson(json['type']) : MemoryType.values.first,
+      impact: json['impact'] != null ? ImpactLevel.fromJson(json['impact']) : ImpactLevel.values.first,
+      status: json['status'] != null ? MemoryStatus.fromJson(json['status']) : MemoryStatus.values.first,
       content: json['content'],
       tags: json['tags'] ?? [],
       endDate: json['end_date'],
@@ -36,9 +36,9 @@ class CoachEngram {
 
   Map<String, dynamic> toJson() {
     return {
-      'type': type?.toJson(),
-      'impact': impact?.toJson(),
-      'status': status?.toJson(),
+      'type': type.toJson(),
+      'impact': impact.toJson(),
+      'status': status.toJson(),
       'content': content,
       'tags': tags,
       'end_date': endDate,
