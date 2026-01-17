@@ -235,3 +235,40 @@ async def delete_memory(
     db.delete(memory)
     db.commit()
     return None
+
+# ==============================================================================
+# 🗑️ DELETE ENGRAM (La route manquante pour corriger l'erreur 405)
+# ==============================================================================
+@router.delete("/engrams/{engram_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_engram(
+    engram_id: int,
+    db: Session = Depends(get_db),
+    current_user: sql_models.User = Depends(get_current_user)
+):
+    """
+    Supprime un souvenir spécifique (Engramme).
+    """
+    # 1. Vérification de propriété (Sécurité)
+    # On s'assure que l'engramme appartient bien à une mémoire liée au user connecté
+    engram = db.query(sql_models.CoachEngram)\
+        .join(sql_models.CoachMemory)\
+        .join(sql_models.AthleteProfile)\
+        .filter(
+            sql_models.CoachEngram.id == engram_id,
+            sql_models.AthleteProfile.user_id == current_user.id
+        ).first()
+
+    if not engram:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Engramme introuvable ou accès refusé."
+        )
+
+    # 2. Suppression physique
+    db.delete(engram)
+    
+    # 3. Update Meta (Optionnel : dire à la mémoire qu'elle a changé)
+    engram.memory.last_updated = datetime.utcnow()
+    
+    db.commit()
+    return None

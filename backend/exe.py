@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta
 
 # --- CONFIGURATION DU PATH ---
+# Permet d'importer les modules 'app' même si on lance le script depuis backend/
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
@@ -20,6 +21,7 @@ except ImportError as e:
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# Configuration de la connexion DB
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -46,8 +48,9 @@ def repair_and_seed(target_user_id: int):
             # Création d'un profil minimal pour satisfaire la Foreign Key
             profile = AthleteProfile(
                 user_id=user.id,
-                biometrics={"weight": 80, "height": 180}, # Valeurs par défaut
-                performance_metrics={}
+                basic_info={"pseudo": user.username, "generated": True},
+                physical_metrics={"weight": 80, "height": 180},
+                performance_baseline={}
             )
             db.add(profile)
             db.commit()
@@ -56,7 +59,7 @@ def repair_and_seed(target_user_id: int):
         else:
             print(f"  - ✅ Profil athlétique existant trouvé (ID: {profile.id}).")
 
-        # C'est cet ID qu'on doit utiliser, pas forcément 17 !
+        # C'est cet ID qu'on doit utiliser pour lier la mémoire
         real_profile_id = profile.id
 
         # ÉTAPE 3 : Validation ou Création de la Mémoire
@@ -66,9 +69,9 @@ def repair_and_seed(target_user_id: int):
             print(f"  - Création du conteneur CoachMemory pour le Profil {real_profile_id}...")
             memory = CoachMemory(
                 athlete_profile_id=real_profile_id,
-                coach_notes={},
+                coach_notes={"source": "repair_script"},
                 memory_flags={},
-                current_context={}
+                current_context={"readiness_score": 85}
             )
             db.add(memory)
             db.commit()
@@ -77,6 +80,7 @@ def repair_and_seed(target_user_id: int):
             print(f"  - Conteneur CoachMemory trouvé (ID: {memory.id})")
 
         # ÉTAPE 4 : Injection des Engrammes (Souvenirs)
+        # Note : On utilise 'ACTIVE' même pour les événements futurs (SCHEDULED n'existe pas dans l'Enum SQL)
         engrams_data = [
             {
                 "type": MemoryType.INJURY_REPORT,
@@ -90,7 +94,8 @@ def repair_and_seed(target_user_id: int):
             {
                 "type": MemoryType.LIFE_CONSTRAINT,
                 "impact": ImpactLevel.MODERATE,
-                "status": MemoryStatus.SCHEDULED,
+                # [CORRECTIF] Utilisation de ACTIVE car SCHEDULED n'est pas dans l'Enum
+                "status": MemoryStatus.ACTIVE, 
                 "content": "Déplacement Londres. Matériel limité.",
                 "tags": ["travel"],
                 "start_date": datetime.now() + timedelta(days=5),
@@ -109,6 +114,7 @@ def repair_and_seed(target_user_id: int):
 
         count = 0
         for data in engrams_data:
+            # On vérifie si un engramme identique existe déjà pour ne pas dupliquer
             exists = db.query(CoachEngram).filter(
                 CoachEngram.memory_id == memory.id,
                 CoachEngram.content == data["content"]
@@ -135,5 +141,6 @@ def repair_and_seed(target_user_id: int):
         db.close()
 
 if __name__ == "__main__":
-    # On cible l'USER 17, le script se débrouillera pour trouver/créer le reste
-    repair_and_seed(target_user_id=17)
+    # Remplacez 17 par l'ID de votre utilisateur si nécessaire,
+    # ou laissez 17 si c'est celui que vous utilisez pour tester.
+    repair_and_seed(target_user_id=1)
